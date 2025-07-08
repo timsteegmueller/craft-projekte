@@ -1,0 +1,109 @@
+name: Auto-Update Craft CMS
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'     # Jeden Sonntag um 03:00 Uhr
+  workflow_dispatch:        # Manueller Trigger möglich
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - name: demo
+            server: qis.farbcode.net
+            path: /var/www/demo
+            github_repo: timsteegmueller/craft-projekte
+            branch: main
+            domain: https://qis.farbcode.net
+            db_name: database
+            db_user: craft_user
+            backup_dir: /backups
+          # Füge hier weitere Projekte hinzu
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.github_repo }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: project
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Backup DB & Update Craft CMS via SSH
+        run: |
+          ssh -o StrictHostKeyChecking=no farbcode@${{ matrix.server }} << 'EOF'
+            set -e
+            mkdir -p ${{ matrix.backup_dir }}
+            echo "💾 Backup der DB '${{ matrix.db_name }}'..."
+            mysqldump -u ${{ matrix.db_user }} -p'${{ secrets.DB_PASSWORD }}' '${{ matrix.db_name }}' > ${{ matrix.backup_dir }}/backup-$(date +%F_%H%M%S).sql
+
+            cd ${{ matrix.path }}
+            echo "🚀 Running Craft & Composer update..."
+            php craft update all --interactive=0
+            composer update --no-dev --optimize-autoloader
+            php craft migrate/all --interactive=0
+            php craft clear-caches/all
+
+            echo "📤 Git commit & push..."
+            BRANCH="auto-update-${{ matrix.name }}-$(date +%F)"
+            git checkout -b "$BRANCH"
+            git add composer.lock
+            git commit -m "🤖 Auto-Update ${{ matrix.name }} $(date +%F)"
+            git push origin "$BRANCH"
+          EOF
+        shell: bash
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ matrix.github_repo }}
+          base: ${{ matrix.branch }}
+          head: auto-update-${{ matrix.name }}-$(date +%F)
+          title: "🤖 Auto-Update Craft CMS – ${{ matrix.name }}"
+          body: |
+            Automatisches Update für Projekt **${{ matrix.name }}**  
+            • _Backup der Datenbank erstellt_  
+            • _Craft & Composer aktualisiert_  
+            • _PR zum Mergen bereit_
+
+      - name: Health Check
+        id: health
+        run: |
+          STATUS=$(curl -o /dev/null -s -w '%{http_code}' ${{ matrix.domain }})
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Slack Notification on Success
+        if: steps.health.outputs.status == '200'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: Update für *${{ matrix.name }}* erfolgreich (`HTTP 200`)",
+              "attachments": [
+                { "text": "PR: https://github.com/${{ matrix.github_repo }}/pulls" }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Slack Notification on Failure
+        if: steps.health.outputs.status != '200'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": ":x: Update für *${{ matrix.name }}* fehlgeschlagen (`HTTP ${{ steps.health.outputs.status }}`)",
+              "attachments": [
+                { "text": "Bitte Logs prüfen oder manuell einlenken." }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
