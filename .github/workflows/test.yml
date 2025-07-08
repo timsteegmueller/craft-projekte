@@ -1,211 +1,340 @@
-name: Craft CMS Update Test (Ohne Server)
-
-# Wann soll es laufen?
-on:
-  # Manuell zum Testen
-  workflow_dispatch:
-  # Oder jeden Tag um 9 Uhr (zum Testen)
-  schedule:
-    - cron: '0 9 * * *'
-
-jobs:
-  test-craft-updates:
-    runs-on: ubuntu-latest
-    
-    steps:
-      # 1. Repository auschecken
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-        
-      # 2. PHP Setup (für Craft CMS)
-      - name: 🐘 Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.1'
-          extensions: mbstring, intl, gd, imagick, zip, dom, mysql, pdo_mysql
-          coverage: none
-          
-      # 3. Composer Cache
-      - name: 📦 Cache Composer
-        uses: actions/cache@v3
-        with:
-          path: vendor
-          key: composer-${{ hashFiles('**/composer.lock') }}
-          
-      # 4. Composer Install (Test)
-      - name: 📋 Install Composer Dependencies
-        run: |
-          # Fake composer.json erstellen (falls nicht vorhanden)
-          if [ ! -f composer.json ]; then
-            echo '{
-              "name": "tim/craft-test-project",
-              "description": "Test Craft CMS Project",
-              "type": "project",
-              "require": {
-                "craftcms/cms": "^4.0",
-                "vlucas/phpdotenv": "^5.4.0"
-              },
-              "config": {
-                "sort-packages": true,
-                "platform": {
-                  "php": "8.1"
-                }
+{
+  "meta": {
+    "instanceId": "farbcode-craft-automation"
+  },
+  "name": "farbcode Craft CMS Auto-Update System",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "schedule-trigger",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "",
+      "credentials": {},
+      "settings": {
+        "schedule": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "value": "0 3 * * 0"
               }
-            }' > composer.json
-          fi
-          
-          composer install --no-interaction --prefer-dist --optimize-autoloader
-          
-      # 5. Simuliere Craft Updates (ohne echten Server)
-      - name: 🚀 Simulate Craft Updates
-        run: |
-          echo "🎯 Simuliere Craft CMS Updates..."
-          echo "📦 Checke verfügbare Updates..."
-          
-          # Composer Outdated Check
-          composer outdated --format=json > updates.json || echo "Keine Updates verfügbar"
-          
-          # Simuliere Update-Process
-          echo "✅ Craft Core: 4.4.15 → 4.5.0 (simuliert)"
-          echo "✅ Craft Commerce: 4.2.1 → 4.2.3 (simuliert)" 
-          echo "✅ Plugin XYZ: 1.0.0 → 1.0.1 (simuliert)"
-          
-          # Update Composer Dependencies (TEST)
-          composer update --dry-run --no-interaction
-          
-      # 6. Simuliere Database Backup
-      - name: 💾 Simulate Database Backup
-        run: |
-          echo "🗄️ Simuliere Datenbank-Backup..."
-          
-          # Fake Backup erstellen
-          mkdir -p backups
-          echo "-- Fake MySQL Dump for Testing
-          -- Generated on $(date)
-          -- Database: craft_test
-          
-          CREATE DATABASE IF NOT EXISTS craft_test;
-          USE craft_test;
-          
-          CREATE TABLE test_table (
-            id INT PRIMARY KEY,
-            name VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-          
-          INSERT INTO test_table (id, name) VALUES (1, 'Test Entry');
-          " > backups/backup-$(date +%Y%m%d_%H%M%S).sql
-          
-          echo "✅ Backup erstellt: backups/backup-$(date +%Y%m%d_%H%M%S).sql"
-          ls -la backups/
-          
-      # 7. Git Changes simulieren
-      - name: 📝 Simulate Git Changes
-        run: |
-          echo "🔄 Simuliere Git-Änderungen..."
-          
-          # Fake composer.lock Änderungen
-          echo "// Updated on $(date)" >> composer.lock.new
-          echo "✅ composer.lock würde aktualisiert werden"
-          
-          # Git Status simulieren
-          echo "📋 Git Status (simuliert):"
-          echo "  modified: composer.lock"
-          echo "  modified: craft/config/project/project.yaml"
-          echo "  new file: backups/backup-$(date +%Y%m%d_%H%M%S).sql"
-          
-      # 8. Pull Request Simulation
-      - name: 🔄 Simulate Pull Request
-        run: |
-          echo "📤 Würde Pull Request erstellen mit:"
-          echo ""
-          echo "🤖 Title: Auto-Update Craft CMS Dependencies $(date +%Y-%m-%d)"
-          echo ""
-          echo "📋 Body:"
-          echo "## 🤖 Automatische Dependency Updates"
-          echo ""
-          echo "**Datum:** $(date)"
-          echo "**Typ:** Simulation (Kein echter Server)"
-          echo ""
-          echo "### ✅ Simulierte Änderungen:"
-          echo "- 💾 Datenbank-Backup erstellt"
-          echo "- 🚀 Craft CMS Dependencies geprüft" 
-          echo "- 📦 Composer Updates simuliert"
-          echo "- 🔍 Git-Änderungen vorbereitet"
-          echo ""
-          echo "### 📋 Nächste Schritte:"
-          echo "- [ ] Echten Server einrichten"
-          echo "- [ ] Laravel Envoyer konfigurieren"
-          echo "- [ ] Datenbank-Setup"
-          echo "- [ ] SSH-Keys für Production"
-          
-      # 9. Website Health Check Simulation
-      - name: 🏥 Simulate Health Check
-        run: |
-          echo "🔍 Simuliere Website Health Check..."
-          
-          # Fake HTTP Checks
-          echo "✅ https://dein-projekt.de/ → HTTP 200 OK (simuliert)"
-          echo "✅ https://dein-projekt.de/admin → HTTP 200 OK (simuliert)"
-          echo "✅ https://dein-projekt.de/api/health → HTTP 200 OK (simuliert)"
-          
-          # Performance Simulation
-          echo "⚡ Response Time: 245ms (simuliert)"
-          echo "📊 Memory Usage: 128MB (simuliert)"
-          echo "💾 Disk Space: 85% used (simuliert)"
-          
-      # 10. Notification Simulation
-      - name: 📢 Simulate Notifications
-        run: |
-          echo "🔔 Würde Benachrichtigungen senden:"
-          echo ""
-          echo "📱 Slack: '✅ Craft CMS Updates für Test-Projekt abgeschlossen'"
-          echo "📧 E-Mail: 'Updates erfolgreich - Review benötigt'"
-          echo "💬 Discord: '🚀 Deployment-Pipeline durchgelaufen'"
-          
-      # 11. Summary Report
-      - name: 📊 Generate Summary Report
-        run: |
-          echo "# 📊 Craft CMS Update Summary Report" > summary.md
-          echo "" >> summary.md
-          echo "**Datum:** $(date)" >> summary.md
-          echo "**Status:** ✅ Test erfolgreich" >> summary.md
-          echo "**Modus:** Simulation (Kein Server)" >> summary.md
-          echo "" >> summary.md
-          echo "## 🎯 Nächste Schritte für Production:" >> summary.md
-          echo "" >> summary.md
-          echo "1. 🖥️ **Server einrichten**" >> summary.md
-          echo "   - VPS oder Cloud-Server (DigitalOcean, AWS, Hetzner)" >> summary.md
-          echo "   - PHP 8.1+, MySQL, Nginx/Apache" >> summary.md
-          echo "   - SSH-Zugriff konfigurieren" >> summary.md
-          echo "" >> summary.md
-          echo "2. 🚀 **Laravel Envoyer Setup**" >> summary.md
-          echo "   - Account erstellen: https://envoyer.io" >> summary.md
-          echo "   - Deployment-Pipeline konfigurieren" >> summary.md
-          echo "   - Zero-Downtime Deployments" >> summary.md
-          echo "" >> summary.md
-          echo "3. 🗄️ **Datenbank Setup**" >> summary.md
-          echo "   - MySQL/PostgreSQL Installation" >> summary.md
-          echo "   - Backup-Strategie definieren" >> summary.md
-          echo "   - Migration-Scripts erstellen" >> summary.md
-          echo "" >> summary.md
-          echo "4. 🔐 **Security Hardening**" >> summary.md
-          echo "   - SSL-Zertifikate (Let's Encrypt)" >> summary.md
-          echo "   - Firewall-Konfiguration" >> summary.md
-          echo "   - SSH-Key-Management" >> summary.md
-          
-          echo ""
-          echo "📄 Summary Report erstellt:"
-          cat summary.md
-
-# MOCK SECRETS FÜR TESTS (später durch echte ersetzen):
-# 
-# Wenn du echte Secrets hinzufügst:
-# - SSH_PRIVATE_KEY: Dein Server SSH-Key  
-# - SSH_USER: Server Username (z.B. ubuntu)
-# - SSH_HOST: Server-IP oder Domain
-# - DB_USER: Datenbank-Username
-# - DB_PASSWORD: Datenbank-Passwort
-# - DB_NAME: Datenbank-Name
-# - ENVOYER_API_TOKEN: Laravel Envoyer API-Token
-# - SLACK_WEBHOOK_URL: Slack-Notifications
+            ]
+          }
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// farbcode Kunden-Projekte definieren\nconst projects = [\n  {\n    name: \"kunde-alpha-website\",\n    server: \"server01.farbcode.de\",\n    path: \"/var/www/kunde-alpha\",\n    github_repo: \"farbcode/kunde-alpha-craft\",\n    branch: \"main\",\n    domain: \"https://kunde-alpha.de\",\n    db_name: \"kunde_alpha_db\",\n    client: \"Alpha GmbH\"\n  },\n  {\n    name: \"kunde-beta-portal\",\n    server: \"server02.farbcode.de\", \n    path: \"/var/www/kunde-beta\",\n    github_repo: \"farbcode/kunde-beta-craft\",\n    branch: \"production\",\n    domain: \"https://beta-portal.com\",\n    db_name: \"kunde_beta_db\", \n    client: \"Beta Corporation\"\n  },\n  {\n    name: \"farbcode-website\",\n    server: \"main.farbcode.de\",\n    path: \"/var/www/farbcode\",\n    github_repo: \"farbcode/farbcode-website\",\n    branch: \"main\", \n    domain: \"https://farbcode.de\",\n    db_name: \"farbcode_main\",\n    client: \"farbcode Internal\"\n  }\n];\n\n// Projekte für Processing vorbereiten\nconst output = [];\nprojects.forEach((project, index) => {\n  output.push({\n    json: {\n      ...project,\n      project_id: index + 1,\n      timestamp: new Date().toISOString(),\n      update_type: \"scheduled\",\n      backup_path: `/backups/${project.name}`,\n      notification_channel: \"#farbcode-deployments\"\n    }\n  });\n});\n\nreturn output;"
+      },
+      "id": "project-config",
+      "name": "farbcode Project Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {},
+      "id": "loop-projects",
+      "name": "Process Each Project",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "command": "# farbcode Server: Database Backup erstellen\nSSH_HOST=\"{{ $json.server }}\"\nPROJECT_PATH=\"{{ $json.path }}\"\nDB_NAME=\"{{ $json.db_name }}\"\nBACKUP_PATH=\"{{ $json.backup_path }}\"\n\necho \"🏢 farbcode: Creating backup for {{ $json.client }}\"\necho \"📡 Server: $SSH_HOST\"\necho \"💾 Database: $DB_NAME\"\n\n# SSH zu farbcode Server\nssh -o StrictHostKeyChecking=no farbcode@$SSH_HOST \\\n  \"cd $PROJECT_PATH && \\\n   mkdir -p $BACKUP_PATH && \\\n   mysqldump -u craft_user -p'{{ $secrets.DB_PASSWORD }}' $DB_NAME > $BACKUP_PATH/backup-$(date +%Y%m%d_%H%M%S).sql && \\\n   echo 'Backup created for {{ $json.name }}'\"\n\necho \"✅ Backup completed for {{ $json.name }}\""
+      },
+      "id": "backup-database",
+      "name": "farbcode DB Backup",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "ssh": {
+          "id": "farbcode-ssh",
+          "name": "farbcode SSH Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "# farbcode Server: Craft CMS Updates ausführen\nSSH_HOST=\"{{ $json.server }}\"\nPROJECT_PATH=\"{{ $json.path }}\"\n\necho \"🚀 farbcode: Updating Craft CMS for {{ $json.client }}\"\necho \"📂 Project: {{ $json.name }}\"\necho \"🖥️ Server: $SSH_HOST\"\n\n# SSH zu farbcode Server und Updates ausführen\nssh -o StrictHostKeyChecking=no farbcode@$SSH_HOST \\\n  \"cd $PROJECT_PATH && \\\n   echo 'Starting Craft updates...' && \\\n   php craft update all --interactive=0 && \\\n   echo 'Updating Composer dependencies...' && \\\n   composer update --no-dev --optimize-autoloader && \\\n   echo 'Running Craft migrations...' && \\\n   php craft migrate/all --interactive=0 && \\\n   echo 'Clearing caches...' && \\\n   php craft clear-caches/all && \\\n   echo 'Updates completed for {{ $json.name }}'\"\n\necho \"✅ Craft CMS updated for {{ $json.client }}\""
+      },
+      "id": "update-craft",
+      "name": "farbcode Craft Update",
+      "type": "n8n-nodes-base.executeCommand", 
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "ssh": {
+          "id": "farbcode-ssh",
+          "name": "farbcode SSH Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "# farbcode: Git Operations für GitHub\nSSH_HOST=\"{{ $json.server }}\"\nPROJECT_PATH=\"{{ $json.path }}\"\nBRANCH_NAME=\"auto-update-$(date +%Y%m%d)\"\n\necho \"📤 farbcode: Git operations for {{ $json.github_repo }}\"\necho \"🌿 Creating branch: $BRANCH_NAME\"\n\n# SSH zu farbcode Server für Git-Operationen\nssh -o StrictHostKeyChecking=no farbcode@$SSH_HOST \\\n  \"cd $PROJECT_PATH && \\\n   echo 'Checking Git status...' && \\\n   git status && \\\n   echo 'Creating update branch...' && \\\n   git checkout -b $BRANCH_NAME && \\\n   echo 'Adding changed files...' && \\\n   git add composer.lock vendor/ config/project/ && \\\n   echo 'Committing changes...' && \\\n   git commit -m 'farbcode auto-update: Craft CMS dependencies $(date +%Y-%m-%d)' && \\\n   echo 'Pushing to GitHub...' && \\\n   git push origin $BRANCH_NAME && \\\n   echo 'Git operations completed'\"\n\necho \"✅ Changes pushed to GitHub for {{ $json.client }}\"\necho \"🔗 Branch: $BRANCH_NAME\""
+      },
+      "id": "git-operations",
+      "name": "farbcode Git Push",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1, \n      "position": [1340, 300],
+      "credentials": {
+        "ssh": {
+          "id": "farbcode-ssh",
+          "name": "farbcode SSH Keys"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/{{ $json.github_repo }}/pulls",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version", 
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "🤖 farbcode Auto-Update: {{ $json.client }} Craft CMS Dependencies"
+            },
+            {
+              "name": "head", 
+              "value": "auto-update-{{ $now.format('YYYYMMDD') }}"
+            },
+            {
+              "name": "base",
+              "value": "{{ $json.branch }}"
+            },
+            {
+              "name": "body",
+              "value": "## 🏢 farbcode Automatische Updates\\n\\n**Kunde:** {{ $json.client }}\\n**Projekt:** {{ $json.name }}\\n**Server:** {{ $json.server }}\\n**Datum:** {{ $now.format('YYYY-MM-DD HH:mm') }}\\n\\n### ✅ Durchgeführte Aktionen:\\n- 💾 Datenbank-Backup erstellt\\n- 🚀 Craft CMS Core aktualisiert\\n- 📦 Composer Dependencies aktualisiert\\n- 🔄 Migrationen ausgeführt\\n- 🗑️ Caches geleert\\n\\n### 🔍 Änderungen:\\n- `composer.lock` - Dependency-Updates\\n- `config/project/` - Craft CMS Konfiguration\\n- `vendor/` - Updated packages\\n\\n### 📋 Review-Checklist:\\n- [ ] Staging-Environment testen\\n- [ ] Backend-Funktionalität prüfen\\n- [ ] Frontend-Kompatibilität checken\\n- [ ] Performance-Impact bewerten\\n- [ ] Kunden-Feedback einholen\\n\\n### 🚀 Deployment:\\n- [ ] Staging approved\\n- [ ] Client approval\\n- [ ] Production deployment\\n\\n---\\n*Automatisch erstellt von farbcode N8N Automation System*"
+            }
+          ]
+        }
+      },
+      "id": "github-pr",
+      "name": "farbcode GitHub PR", 
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "github-api",
+          "name": "farbcode GitHub API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "{{ $json.domain }}",
+        "options": {
+          "timeout": 10000,
+          "followRedirect": true
+        }
+      },
+      "id": "health-check",
+      "name": "farbcode Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "health-status",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "status-check",
+      "name": "Status Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "url": "{{ $secrets.FARBCODE_SLACK_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"channel\": \"#farbcode-deployments\", \n  \"username\": \"farbcode-automation\",\n  \"icon_emoji\": \": rocket:\",\n  \"text\": \"✅ farbcode Craft CMS Update Success\",\n  \"attachments\": [\n    {\n      \"color\": \"good\",\n      \"title\": \"{{ $('farbcode Project Config').item.json.client }} - Update Completed\",\n      \"fields\": [\n        {\n          \"title\": \"Projekt\",\n          \"value\": \"{{ $('farbcode Project Config').item.json.name }}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Server\", \n          \"value\": \"{{ $('farbcode Project Config').item.json.server }}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Status\",\n          \"value\": \"HTTP {{ $json.statusCode }} ✅\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Zeit\",\n          \"value\": \"{{ $now.format('DD.MM.YYYY HH:mm') }}\",\n          \"short\": true\n        }\n      ],\n      \"actions\": [\n        {\n          \"type\": \"button\",\n          \"text\": \"GitHub PR ansehen\",\n          \"url\": \"https://github.com/{{ $('farbcode Project Config').item.json.github_repo }}/pulls\"\n        },\n        {\n          \"type\": \"button\", \n          \"text\": \"Website prüfen\",\n          \"url\": \"{{ $('farbcode Project Config').item.json.domain }}\"\n        }\n      ]\n    }\n  ]\n}"
+      },
+      "id": "success-notification",
+      "name": "farbcode Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 200]
+    },
+    {
+      "parameters": {
+        "url": "{{ $secrets.FARBCODE_SLACK_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json", 
+        "jsonBody": "{\n  \"channel\": \"#farbcode-alerts\",\n  \"username\": \"farbcode-automation\",\n  \"icon_emoji\": \":warning:\",\n  \"text\": \"🚨 farbcode Craft CMS Update Error\",\n  \"attachments\": [\n    {\n      \"color\": \"danger\",\n      \"title\": \"{{ $('farbcode Project Config').item.json.client }} - Update Failed\",\n      \"fields\": [\n        {\n          \"title\": \"Projekt\",\n          \"value\": \"{{ $('farbcode Project Config').item.json.name }}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Server\",\n          \"value\": \"{{ $('farbcode Project Config').item.json.server }}\", \n          \"short\": true\n        },\n        {\n          \"title\": \"Error\",\n          \"value\": \"HTTP {{ $json.statusCode || 'Connection Failed' }} ❌\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Zeit\",\n          \"value\": \"{{ $now.format('DD.MM.YYYY HH:mm') }}\",\n          \"short\": true\n        }\n      ],\n      \"actions\": [\n        {\n          \"type\": \"button\",\n          \"text\": \"N8N Logs prüfen\", \n          \"url\": \"https://n8n.farbcode.net/workflow/{{ $workflow.id }}\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": \"Server SSH\",\n          \"url\": \"ssh://farbcode@{{ $('farbcode Project Config').item.json.server }}\"\n        }\n      ]\n    }\n  ]\n}"
+      },
+      "id": "error-notification", 
+      "name": "farbcode Error Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 400]
+    }
+  ],
+  "connections": {
+    "Weekly Schedule": {
+      "main": [
+        [
+          {
+            "node": "farbcode Project Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode Project Config": {
+      "main": [
+        [
+          {
+            "node": "Process Each Project", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Project": {
+      "main": [
+        [
+          {
+            "node": "farbcode DB Backup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode DB Backup": {
+      "main": [
+        [
+          {
+            "node": "farbcode Craft Update",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode Craft Update": {
+      "main": [
+        [
+          {
+            "node": "farbcode Git Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode Git Push": {
+      "main": [
+        [
+          {
+            "node": "farbcode GitHub PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode GitHub PR": {
+      "main": [
+        [
+          {
+            "node": "farbcode Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "farbcode Health Check": {
+      "main": [
+        [
+          {
+            "node": "Status Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Check": {
+      "main": [
+        [
+          {
+            "node": "farbcode Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "farbcode Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-07-08T12:00:00.000Z",
+      "updatedAt": "2025-07-08T12:00:00.000Z", 
+      "id": "farbcode-automation",
+      "name": "farbcode"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-07-08T12:00:00.000Z",
+  "versionId": "farbcode-v1.0"
+}
