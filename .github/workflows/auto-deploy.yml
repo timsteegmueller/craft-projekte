@@ -1,0 +1,56 @@
+name: Craft Auto-Deploy
+on:
+  push:
+    branches: [main]
+    paths: [composer.lock]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Add known host
+      run: ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Remote backup + update
+      run: |
+        set -e
+        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} <<'CMD'
+          cd ${{ secrets.PROJECT_PATH }}
+          mysqldump -u root -p'${{ secrets.DB_PASSWORD }}' database > tmp/backup-$(date +%F_%T).sql
+          composer install --no-interaction --no-dev
+          php craft update all --interactive=0
+        CMD
+
+    - name: Push new lockfile
+      run: |
+        git config user.name "Craft-Bot"
+        git config user.email "bot@farbcode.net"
+        git add composer.lock || true
+        git commit -m "🤖 lockfile after remote update" || echo "no change"
+        git push origin main || true
+
+    - name: Health check
+      id: ping
+      run: echo "code=$(curl -s -o /dev/null -w '%{http_code}' http://${{ secrets.DOMAIN }}/)" >> $GITHUB_OUTPUT
+
+    - name: Slack OK
+      if: steps.ping.outputs.code == '200'
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        payload: '{"text":":white_check_mark: Deploy OK (200) on '${{ secrets.DOMAIN }}'"}'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+    - name: Slack FAIL
+      if: steps.ping.outputs.code != '200'
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        payload: '{"text":":x: Deploy FAILED ('${{ steps.ping.outputs.code }}') on '${{ secrets.DOMAIN }}'"}'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
