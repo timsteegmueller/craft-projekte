@@ -1,5 +1,29 @@
-name: 🚀 Craft CMS Auto Update & PR
-
+# Workflow-Step VOR composer install hinzufügen:
+- name: 🚀 Create Craft CMS Project
+  if: ${{ !fileExists('composer.json') }}
+  run: |
+    echo "📦 Erstelle neues Craft CMS Projekt..."
+    composer create-project craftcms/craft . --no-interaction
+    
+    # Basic .env erstellen
+    cat > .env << 'ENV_EOF'
+    # Database Configuration
+    CRAFT_DB_DRIVER=mysql
+    CRAFT_DB_SERVER=localhost
+    CRAFT_DB_PORT=3306
+    CRAFT_DB_DATABASE=craft_db
+    CRAFT_DB_USER=craft_user
+    CRAFT_DB_PASSWORD=password
+    CRAFT_DB_SCHEMA=
+    CRAFT_DB_TABLE_PREFIX=
+    
+    # Environment
+    CRAFT_ENVIRONMENT=production
+    CRAFT_SECURITY_KEY=your-security-key-here
+    CRAFT_DEV_MODE=false
+    ENV_EOF
+    
+    echo "✅ Craft CMS Projekt erstellt"
 on:
   schedule:
     - cron: '0 3 * * 0'  # Jeden Sonntag um 3 Uhr
