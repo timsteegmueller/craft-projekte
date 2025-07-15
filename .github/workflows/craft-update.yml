@@ -1,111 +1,60 @@
-name: 🔄 Craft CMS Update Check & PR
+name: 🔄 Modular Craft CMS Update
 
 on:
-  schedule:
-    - cron: '0 3 * * 0'          # jeden Sonntag um 03 Uhr
-  workflow_dispatch:
-    inputs:
-      update_type:
-        description: 'Update Type'
-        default: 'manual'
-        type: choice
-        options: [manual, scheduled, security-update]
-      force_init:
-        description: 'Force new Craft installation'
-        default: false
-        type: boolean
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  repository_dispatch:
+    types: [craft-update]
 
 env:
-  # Pfade / Konstanten an einer Stelle
-  DB_BACKUP_FILE: db-backup-$(date +%Y%m%d%H%M%S).sql
+  DB_NAME: ${{ github.event.client_payload.db_name }}
+  SSH_USER: ${{ github.event.client_payload.ssh_user }}
+  SSH_HOST: ${{ github.event.client_payload.ssh_host }}
+  SITE_HOST: ${{ github.event.client_payload.site_host }}
 
 jobs:
-  craft-update:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - name: 🔄 Repository auschecken
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: 🐘 PHP 8.1 + Composer 2 install
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: '8.1'
-        extensions: mbstring, xml, intl, pdo_mysql, gd, zip
-        tools: composer:v2
-
-    - name: 🗄️ Datenbank-Backup vor Update
-      # nutzt Secrets für SSH und DB-Passwort
-      run: |
-        echo "→ erstelle Backup $DB_BACKUP_FILE"
-        ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-          "mysqldump -u${{ secrets.DB_USER }} -p${{ secrets.DB_PASS }} ${{ secrets.DB_NAME }} > ~/backups/$DB_BACKUP_FILE"
-        echo "Backup abgeschlossen"
-
-    - name: 📦 Composer install / update-dry-run
-      id: check
-      run: |
-        composer install --no-dev --no-interaction --prefer-dist
-        composer update --dry-run --no-dev --no-interaction --no-plugins >update_plan.txt || true
-        if grep -q 'craftcms/cms' update_plan.txt; then
-          echo "updates_available=true" >>"$GITHUB_OUTPUT"
-        else
-          echo "updates_available=false" >>"$GITHUB_OUTPUT"
-        fi
-
-    - name: 📦 Composer update (real)
-      if: steps.check.outputs.updates_available == 'true'
-      run: composer update --no-dev --no-interaction --prefer-dist
-
-    - name: 🧪 HTTP Funktionstest (Status 200 auf /)
-      if: steps.check.outputs.updates_available == 'true'
-      run: |
-        status=$(curl -s -o /dev/null -w '%{http_code}' https://${{ secrets.SITE_HOST }}/)
-        if [ "$status" != "200" ]; then
-          echo "::error ::Deployment check failed – expected 200, got $status"
-          exit 1
-        fi
-        echo "Test erfolgreich (200)"
-
-    - name: 📝 Commit & Pull-Request
-      if: steps.check.outputs.updates_available == 'true'
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        commit-message: "🔄 Auto-update Craft CMS dependencies"
-        title: "🔄 Craft CMS ${{ github.event.inputs.update_type || 'Scheduled' }} Update – $(date +%Y-%m-%d)"
-        body: |
-          Automatisches Update via GitHub Actions.  
-          **Status:** grüner Test (HTTP 200) nach Composer-Update.  
-          **Datenbank-Backup:** $DB_BACKUP_FILE
-        branch: craft-update-${{ github.run_id }}
-        labels: auto-update, craft-cms, envoyer-ready
-        delete-branch: true
-        reviewers: ${{ github.actor }}
-
-  notify:
-    needs: craft-update
-    if: needs.craft-update.result == 'failure'
+  update:
     runs-on: ubuntu-latest
     steps:
-    - name: 📧 Fehlalarm senden
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: ${{ vars.MAIL_HOST }}
-        server_port: ${{ vars.MAIL_PORT || '587' }}
-        username: ${{ secrets.MAIL_USERNAME }}
-        password: ${{ secrets.MAIL_PASSWORD }}
-        subject: 'Craft CMS Auto-Update fehlgeschlagen – ${{ github.repository }}'
-        to: tim.steegmueller@farbcode.net
-        from: ${{ vars.MAIL_FROM || secrets.MAIL_USERNAME }}
-        body: |
-          Das automatische Update hat einen Fehler gemeldet.  
-          Prüfe das Log im GitHub-Action-Run: ${{ github.run_url }}
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: mbstring, intl, pdo_mysql, gd, zip
+          tools: composer
+
+      - name: 🗄️ Datenbank-Backup via SSH
+        run: |
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST \
+            "mysqldump -u${{ secrets.DB_USER }} -p${{ secrets.DB_PASS }} $DB_NAME > ~/backups/backup-$(date +%Y%m%d).sql"
+
+      - name: 📦 Composer Update Check
+        id: update
+        run: |
+          composer install --no-dev --no-interaction
+          composer update --dry-run >check.txt || true
+          if grep -q 'craftcms/cms' check.txt; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🔄 Composer Update durchführen
+        if: steps.update.outputs.update_needed == 'true'
+        run: composer update --no-dev --no-interaction
+
+      - name: 🌐 HTTP-Test
+        if: steps.update.outputs.update_needed == 'true'
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' https://$SITE_HOST/)
+          if [ "$status" != "200" ]; then
+            echo "::error ::HTTP-Test fehlgeschlagen ($status statt 200)"
+            exit 1
+          fi
+
+      - name: 🔁 Create PR
+        if: steps.update.outputs.update_needed == 'true'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          commit-message: "🔄 Auto Update für $DB_NAME"
+          title: "Update Craft CMS"
+          branch: update-${{ github.run_id }}
