@@ -1,0 +1,47 @@
+name: 💾 Backup und Craft Update
+
+on:
+  repository_dispatch:
+    types: [run-backup-und-update]
+
+jobs:
+  backup-and-update:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: craft
+          MYSQL_USER: craft
+          MYSQL_PASSWORD: secret
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: 📥 Repository klonen
+        uses: actions/checkout@v4
+
+      - name: 🐘 PHP installieren
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pdo, pdo_mysql, intl, curl, json, dom, fileinfo, gd, openssl, tokenizer, zip, xml, ctype
+
+      - name: 📦 Composer installieren
+        run: composer install --no-interaction --prefer-dist
+
+      - name: 💾 Datenbank-Backup durchführen
+        run: php craft backup/db
+
+      - name: 📈 Craft Update ausführen
+        run: php craft update/all
+
+      - name: ✅ Done!
+        run: echo "Backup und Update erfolgreich abgeschlossen!"
