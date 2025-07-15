@@ -1,20 +1,53 @@
-name: 🚀 Multi-Repo Craft CMS Updates
-
 on:
   workflow_dispatch:
     inputs:
-      target_repo:
-        description: 'Ziel Repository'
-        required: true
-        default: 'craft-test-repo'
-        type: choice
-        options:
-          - craft-test-repo
-          - weiteres-craft-projekt
       update_type:
-        description: 'Update Type'
+        description: 'Art des Updates'
         required: false
         default: 'manual'
+        type: choice
+        options:
+          - manual
+          - weekly-schedule
+          - security-update
+          - dependency-update
+      triggered_by:         
+        description: 'Triggered by'
+        required: false
+        default: 'manual'
+        type: choice
+        options:
+          - manual
+          - n8n-automation
+          - github-scheduler
+          - security-alert
+      target_repo:
+        description: 'Target Repository'
+        required: false
+        default: 'craft-test-repo'
+
+jobs:
+  craft-update:
+    name: 🔄 Craft Update & PR
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 Repository auschecken
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: 📋 Workflow Info
+      run: |
+        echo "🎯 Update Type: ${{ github.event.inputs.update_type || 'push-trigger' }}"
+        echo "🤖 Triggered by: ${{ github.event.inputs.triggered_by || 'github-push' }}"
+        echo "📦 Target Repo: ${{ github.event.inputs.target_repo || 'craft-test-repo' }}"
+        
+        # Info für später verwenden
+        echo "update_type=${{ github.event.inputs.update_type || 'push-trigger' }}" >> $GITHUB_OUTPUT
+        echo "triggered_by=${{ github.event.inputs.triggered_by || 'github-push' }}" >> $GITHUB_OUTPUT
+      id: info
 
 jobs:
   multi-repo-update:
