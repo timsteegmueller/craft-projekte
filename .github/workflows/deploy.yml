@@ -1,51 +1,328 @@
-name: Deploy Changes
+name: 🚀 Craft CMS Deployment with Backup
 
 on:
+  # Automatisch nach PR Merge
   push:
-    branches: [main]  # Startet nach Merge
+    branches: [ main ]
+    paths:
+      - 'craft-repo/**'
+      - 'composer.json'
+      - 'composer.lock'
+  
+  # Manueller Trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_backup:
+        description: 'Skip Database Backup?'
+        required: false
+        default: false
+        type: boolean
+      rollback_commit:
+        description: 'Rollback to specific commit (optional)'
+        required: false
 
 jobs:
-  deploy:
+  pre-deployment:
+    name: 🔍 Pre-Deployment Checks
     runs-on: ubuntu-latest
+    outputs:
+      deploy_environment: ${{ steps.env.outputs.environment }}
+      backup_required: ${{ steps.env.outputs.backup_required }}
+      
     steps:
-      - name: Hole den Code
-        uses: actions/checkout@v3
+    - name: 🔧 Environment Setup
+      id: env
+      run: |
+        # Environment bestimmen
+        if [ "${{ github.event_name }}" = "push" ]; then
+          echo "environment=staging" >> $GITHUB_OUTPUT
+          echo "backup_required=true" >> $GITHUB_OUTPUT
+        else
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          echo "backup_required=${{ !github.event.inputs.skip_backup }}" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "🎯 Deployment Environment: $environment"
+        echo "💾 Backup Required: $backup_required"
 
-      - name: Mache DB-Backup
-        uses: appleboy/ssh-action@v0.1.4
-        with:
-          host: [DEIN_SERVER_HOST]
-          username: [DEIN_SERVER_USER]
-          key: [DEIN_SSH_KEY]  # Privater Key als Secret
-          script: |
-            # Backup der DB – speichere es sicher
-            mysqldump -u [DB_USER] -p[DB_PASS] [DB_NAME] > backup-$(date +%Y-%m-%d).sql
-            # Hier könntest du es zu S3 kopieren, z.B. aws s3 cp ...
+  database-backup:
+    name: 💾 Database Backup
+    runs-on: ubuntu-latest
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.backup_required == 'true'
+    outputs:
+      backup_file: ${{ steps.backup.outputs.backup_file }}
+      backup_success: ${{ steps.backup.outputs.success }}
+      
+    steps:
+    - name: 🔄 Repository auschecken
+      uses: actions/checkout@v4
 
-      - name: Trigger Starface Backup
-        run: |
-          # Sende Request – prüfe auf 200 OK
-          STATUS=$(curl -X POST https://[STARFACE_API_URL]/backup -H "Authorization: Bearer [DEIN_STARFACE_TOKEN]" -d '{"project": "[DEIN_PROJEKT_NAME]"}' -s -o /dev/null -w "%{http_code}")
-          if [ "$STATUS" != "200" ]; then echo "Starface Backup failed!"; exit 1; fi
+    - name: 💾 MySQL Backup erstellen
+      id: backup
+      run: |
+        timestamp=$(date +%Y%m%d-%H%M%S)
+        environment="${{ needs.pre-deployment.outputs.deploy_environment }}"
+        backup_file="craft-${environment}-backup-${timestamp}.sql"
+        
+        echo "🗄️ Erstelle MySQL Backup für ${environment}..."
+        
+        # SSH zum Server und Backup erstellen
+        ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << EOF
+          # Backup Verzeichnis erstellen
+          sudo mkdir -p /var/backups/craft-cms/$(date +%Y/%m/%d)
+          
+          # MySQL Dump mit Struktur und Daten
+          mysqldump --single-transaction \
+                    --routines \
+                    --triggers \
+                    --events \
+                    --set-gtid-purged=OFF \
+                    -h ${{ secrets.DB_HOST }} \
+                    -u ${{ secrets.DB_USER }} \
+                    -p${{ secrets.DB_PASSWORD }} \
+                    ${{ secrets.DB_NAME }} > /tmp/${backup_file}
+          
+          # Backup komprimieren und verschieben
+          gzip /tmp/${backup_file}
+          sudo mv /tmp/${backup_file}.gz /var/backups/craft-cms/$(date +%Y/%m/%d)/
+          
+          # Backup Info
+          ls -la /var/backups/craft-cms/$(date +%Y/%m/%d)/${backup_file}.gz
+          echo "✅ Backup size: \$(du -h /var/backups/craft-cms/$(date +%Y/%m/%d)/${backup_file}.gz | cut -f1)"
+        EOF
+        
+        # Backup für GitHub Artifacts herunterladen
+        scp ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/backups/craft-cms/$(date +%Y/%m/%d)/${backup_file}.gz ./
+        
+        echo "backup_file=${backup_file}.gz" >> $GITHUB_OUTPUT
+        echo "success=true" >> $GITHUB_OUTPUT
+        echo "✅ Database Backup erfolgreich erstellt!"
 
-      - name: Deploye die Änderungen
-        run: envoy run deploy  # Ruft dein Envoy-Skript – stelle sicher, Envoy ist installiert
+    - name: 📤 Backup als Artifact speichern
+      uses: actions/upload-artifact@v4
+      with:
+        name: mysql-backup-${{ github.run_id }}
+        path: ${{ steps.backup.outputs.backup_file }}
+        retention-days: 30
 
-      - name: Prüfe, ob alles läuft
-        id: health
-        run: |
-          # Hole den HTTP-Status – sollte 200 sein
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://[DEINE_SITE_URL])
-          echo "status=$STATUS" >> $GITHUB_OUTPUT
-          if [ "$STATUS" != "200" ]; then exit 1; fi  # Wenn nicht, failt der Job
+    - name: 📤 Backup zu S3 (Optional)
+      if: secrets.AWS_ACCESS_KEY_ID != ''
+      run: |
+        aws s3 cp ${{ steps.backup.outputs.backup_file }} \
+          s3://${{ secrets.S3_BACKUP_BUCKET }}/craft-cms/$(date +%Y/%m/%d)/
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: eu-central-1
 
-      - name: Behandle Fehler
-        if: failure() || steps.health.outputs.status != '200'
-        run: |
-          # Rollback starten und alerten
-          envoy run rollback
-          echo "Problem beim Deployment – Status war ${steps.health.outputs.status}. Rollback läuft." | curl -X POST -d @- [DEIN_SLACK_WEBHOOK]
+  deployment:
+    name: 🚀 Craft CMS Deployment
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, database-backup]
+    if: always() && (needs.database-backup.result == 'success' || needs.database-backup.result == 'skipped')
+    outputs:
+      deployment_success: ${{ steps.deploy.outputs.success }}
+      deployment_url: ${{ steps.deploy.outputs.url }}
+      
+    steps:
+    - name: 🔄 Repository auschecken
+      uses: actions/checkout@v4
 
-      - name: Sage Bescheid, wenn alles gut ist
-        if: success()
-        run: echo "Deployment hat geklappt!" | curl -X POST -d @- [DEIN_SLACK_WEBHOOK]
+    - name: 🚀 Deployment durchführen
+      id: deploy
+      run: |
+        environment="${{ needs.pre-deployment.outputs.deploy_environment }}"
+        echo "🚀 Deploying to ${environment}..."
+        
+        # SSH Deployment
+        ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << EOF
+          # Deployment Verzeichnis
+          cd /var/www/${{ secrets.CRAFT_PROJECT_PATH }}
+          
+          # Git Pull (oder Clone wenn neu)
+          echo "📥 Updating code..."
+          git fetch origin
+          git reset --hard origin/main
+          
+          # Composer Install/Update
+          echo "📦 Installing dependencies..."
+          composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+          
+          # File Permissions
+          echo "🔧 Setting permissions..."
+          sudo chown -R www-data:www-data storage/
+          sudo chown -R www-data:www-data config/
+          sudo chmod -R 755 storage/
+          
+          # Craft CMS Commands
+          echo "⚡ Running Craft commands..."
+          php craft clear-caches/all
+          php craft migrate/all --no-interaction
+          php craft project-config/apply --no-interaction
+          
+          # Asset Build (falls Node.js Setup vorhanden)
+          if [ -f "package.json" ]; then
+            echo "🎨 Building assets..."
+            npm ci --production
+            npm run production
+          fi
+          
+          echo "✅ Deployment completed successfully!"
+        EOF
+        
+        # Deployment URLs setzen
+        if [ "${environment}" = "production" ]; then
+          url="https://${{ secrets.PRODUCTION_DOMAIN }}"
+        else
+          url="https://${{ secrets.STAGING_DOMAIN }}"
+        fi
+        
+        echo "success=true" >> $GITHUB_OUTPUT
+        echo "url=${url}" >> $GITHUB_OUTPUT
+        echo "✅ Deployment to ${environment} completed: ${url}"
+
+  health-check:
+    name: 🏥 Health Check
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, deployment]
+    if: needs.deployment.outputs.deployment_success == 'true'
+    
+    steps:
+    - name: 🏥 Website Health Check
+      run: |
+        url="${{ needs.deployment.outputs.deployment_url }}"
+        echo "🔍 Testing ${url}..."
+        
+        # HTTP Status Check
+        status_code=$(curl -s -o /dev/null -w "%{http_code}" "${url}")
+        
+        if [ "${status_code}" = "200" ]; then
+          echo "✅ Health Check passed: ${status_code}"
+        else
+          echo "❌ Health Check failed: ${status_code}"
+          exit 1
+        fi
+        
+        # Craft-spezifische Checks
+        echo "🔍 Checking Craft CMS specific endpoints..."
+        
+        # Admin Panel erreichbar?
+        admin_status=$(curl -s -o /dev/null -w "%{http_code}" "${url}/admin")
+        echo "Admin Panel Status: ${admin_status}"
+        
+        # API Response Check (falls vorhanden)
+        if curl -s "${url}/api/health" > /dev/null 2>&1; then
+          echo "✅ API Health endpoint responding"
+        fi
+
+  notification:
+    name: 📱 Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [pre-deployment, database-backup, deployment, health-check]
+    if: always()
+    
+    steps:
+    - name: 📱 Slack Notification
+      if: secrets.SLACK_WEBHOOK_URL != ''
+      run: |
+        environment="${{ needs.pre-deployment.outputs.deploy_environment }}"
+        
+        # Status bestimmen
+        if [ "${{ needs.deployment.result }}" = "success" ] && [ "${{ needs.health-check.result }}" = "success" ]; then
+          status="✅ SUCCESS"
+          color="good"
+        else
+          status="❌ FAILED"
+          color="danger"
+        fi
+        
+        # Backup Info
+        backup_info=""
+        if [ "${{ needs.database-backup.result }}" = "success" ]; then
+          backup_info="✅ Database Backup: ${{ needs.database-backup.outputs.backup_file }}"
+        elif [ "${{ needs.database-backup.result }}" = "skipped" ]; then
+          backup_info="⏭️ Database Backup: Skipped"
+        else
+          backup_info="❌ Database Backup: Failed"
+        fi
+        
+        # Slack Message
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{
+            "attachments": [
+              {
+                "color": "'${color}'",
+                "title": "🚀 Craft CMS Deployment - '${environment}'",
+                "fields": [
+                  {
+                    "title": "Status",
+                    "value": "'${status}'",
+                    "short": true
+                  },
+                  {
+                    "title": "Environment",
+                    "value": "'${environment}'",
+                    "short": true
+                  },
+                  {
+                    "title": "Backup",
+                    "value": "'${backup_info}'",
+                    "short": false
+                  },
+                  {
+                    "title": "URL",
+                    "value": "${{ needs.deployment.outputs.deployment_url }}",
+                    "short": false
+                  }
+                ],
+                "footer": "GitHub Actions",
+                "ts": '$(date +%s)'
+              }
+            ]
+          }' ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback:
+    name: 🔄 Rollback (on failure)
+    runs-on: ubuntu-latest
+    needs: [database-backup, deployment, health-check]
+    if: failure() && needs.database-backup.outputs.backup_success == 'true'
+    
+    steps:
+    - name: 🔄 Emergency Rollback
+      run: |
+        echo "❌ Deployment failed - initiating rollback..."
+        
+        ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << EOF
+          cd /var/www/${{ secrets.CRAFT_PROJECT_PATH }}
+          
+          # Git Rollback zum vorherigen Commit
+          git reset --hard HEAD~1
+          
+          # Database Rollback
+          echo "🗄️ Restoring database from backup..."
+          backup_file="${{ needs.database-backup.outputs.backup_file }}"
+          zcat /var/backups/craft-cms/$(date +%Y/%m/%d)/\${backup_file} | \
+            mysql -h ${{ secrets.DB_HOST }} \
+                  -u ${{ secrets.DB_USER }} \
+                  -p${{ secrets.DB_PASSWORD }} \
+                  ${{ secrets.DB_NAME }}
+          
+          # Cache Clear
+          php craft clear-caches/all
+          
+          echo "🔄 Rollback completed"
+        EOF
+        
+        echo "✅ Emergency rollback completed!"
