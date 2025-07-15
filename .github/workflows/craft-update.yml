@@ -1,4 +1,4 @@
-name: 🚀 Craft CMS Auto Update & PR
+name: 🔄 Craft CMS Update Check & PR
 
 on:
   schedule:
@@ -6,179 +6,31 @@ on:
   workflow_dispatch:
     inputs:
       update_type:
-        description: 'Art des Updates'
+        description: 'Update Type'
         required: false
         default: 'manual'
         type: choice
         options:
           - manual
-          - weekly-schedule
+          - scheduled
           - security-update
-          - dependency-update
-      triggered_by:
-        description: 'Triggered by'
-        required: false
-        default: 'manual'
-        type: choice
-        options:
-          - manual
-          - n8n-automation
-          - github-scheduler
-          - security-alert
-      target_repo:
-        description: 'Target Repository'
-        required: false
-        default: 'craft-test-repo'
       force_init:
-        description: 'Force new Craft CMS installation'
+        description: 'Force new Craft installation'
         required: false
         default: false
         type: boolean
 
 jobs:
-  pre-update-backup:
-    name: 💾 Pre-Update Database Backup
-    runs-on: ubuntu-latest
-    outputs:
-      backup_file: ${{ steps.backup.outputs.backup_file }}
-      backup_success: ${{ steps.backup.outputs.success }}
-      
-    steps:
-    - name: 💾 Server-seitiges Database Backup
-      id: backup
-      timeout-minutes: 10
-      run: |
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        
-        echo "💾 Erstelle Pre-Update Database Backup..."
-        
-        # SSH Key Setup falls nicht vorhanden
-        mkdir -p ~/.ssh
-        if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
-          # SSH mit optimierten Verbindungsoptionen
-          ssh -o StrictHostKeyChecking=no \
-              -o ConnectTimeout=30 \
-              -o ServerAliveInterval=10 \
-              -o ServerAliveCountMax=3 \
-              -o BatchMode=yes \
-              -o LogLevel=ERROR \
-              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-            
-            # Backup-Verzeichnis erstellen
-            sudo mkdir -p /var/backups/craft-cms/$(date +%Y/%m/%d)
-            
-            # MySQL Verbindungstest
-            if ! mysql -h ${{ secrets.DB_HOST || 'localhost' }} \
-                        -u ${{ secrets.DB_USER }} \
-                        -p${{ secrets.DB_PASSWORD }} \
-                        -e "SELECT 1;" ${{ secrets.DB_NAME }} > /dev/null 2>&1; then
-              echo "❌ MySQL-Verbindung fehlgeschlagen!"
-              exit 1
-            fi
-            
-            echo "✅ MySQL-Verbindung OK"
-            
-            # Backup-Dateiname
-            BACKUP_FILE="craft_pre_update_backup_$(date +%Y%m%d_%H%M%S).sql"
-            BACKUP_PATH="/var/backups/craft-cms/$(date +%Y/%m/%d)/${BACKUP_FILE}"
-            
-            echo "🗄️ Erstelle MySQL Dump: ${BACKUP_PATH}"
-            
-            # MySQL Dump mit Timeout (5 Minuten)
-            timeout 300 mysqldump --single-transaction \
-                                  --routines \
-                                  --triggers \
-                                  --events \
-                                  --lock-tables=false \
-                                  --add-drop-table \
-                                  --create-options \
-                                  --disable-keys \
-                                  --extended-insert \
-                                  --quick \
-                                  --set-charset \
-                                  -h ${{ secrets.DB_HOST || 'localhost' }} \
-                                  -u ${{ secrets.DB_USER }} \
-                                  -p${{ secrets.DB_PASSWORD }} \
-                                  ${{ secrets.DB_NAME }} > ${BACKUP_PATH}
-            
-            if [ $? -eq 0 ]; then
-              # Backup komprimieren
-              gzip ${BACKUP_PATH}
-              BACKUP_PATH="${BACKUP_PATH}.gz"
-              
-              # Berechtigungen setzen
-              sudo chown www-data:www-data ${BACKUP_PATH}
-              sudo chmod 644 ${BACKUP_PATH}
-              
-              # Backup-Info
-              BACKUP_SIZE=$(du -h ${BACKUP_PATH} | cut -f1)
-              echo "✅ Pre-Update Backup erstellt: ${BACKUP_PATH}"
-              echo "📊 Backup-Größe: ${BACKUP_SIZE}"
-              
-              # Backup-Metadaten
-              cat > ${BACKUP_PATH%.gz}.info << INFOEOF
-        Craft CMS Pre-Update Backup
-        ===========================
-        Timestamp: $(date)
-        Purpose: Pre-Update Safety Backup
-        Database: ${{ secrets.DB_NAME }}
-        File: $(basename ${BACKUP_PATH})
-        Size: ${BACKUP_SIZE}
-        Server: $(hostname)
-        INFOEOF
-              
-              # Alte Backups aufräumen (älter als 30 Tage)
-              find /var/backups/craft-cms -name "*pre_update*.sql.gz" -mtime +30 -delete
-              echo "🧹 Alte Pre-Update Backups gelöscht"
-              
-              # Output für GitHub Actions
-              echo "${BACKUP_FILE}.gz"
-            else
-              echo "❌ MySQL Dump fehlgeschlagen!"
-              exit 1
-            fi
-        EOF
-          
-          echo "backup_file=craft_pre_update_backup_${timestamp}.sql.gz" >> $GITHUB_OUTPUT
-          echo "success=true" >> $GITHUB_OUTPUT
-          echo "✅ Pre-Update Database Backup erfolgreich!"
-        else
-          echo "⚠️ Keine SSH-Verbindung konfiguriert - überspringe Backup"
-          echo "backup_file=no-backup-ssh-missing" >> $GITHUB_OUTPUT
-          echo "success=true" >> $GITHUB_OUTPUT
-        fi
-
   craft-update:
-    name: 🔄 Craft CMS Update Check & PR
+    name: 🔄 Craft CMS Update Check
     runs-on: ubuntu-latest
-    needs: pre-update-backup
-    outputs:
-      updates_available: ${{ steps.updates.outputs.updates_available }}
-      pr_created: ${{ steps.pr.outputs.pr_created }}
-      pr_number: ${{ steps.pr.outputs.pr_number }}
-      project_initialized: ${{ steps.init.outputs.project_initialized }}
-      
+    
     steps:
     - name: 🔄 Repository auschecken
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
-
-    - name: 📋 Workflow Info
-      id: info
-      run: |
-        echo "🎯 Update Type: ${{ inputs.update_type || 'scheduled' }}"
-        echo "🤖 Triggered by: ${{ inputs.triggered_by || 'github-scheduler' }}"
-        echo "📦 Target Repo: ${{ inputs.target_repo || 'craft-test-repo' }}"
-        echo "🔄 Force Init: ${{ inputs.force_init || 'false' }}"
-        echo "💾 Backup File: ${{ needs.pre-update-backup.outputs.backup_file }}"
-        
-        echo "update_type=${{ inputs.update_type || 'scheduled' }}" >> $GITHUB_OUTPUT
-        echo "triggered_by=${{ inputs.triggered_by || 'github-scheduler' }}" >> $GITHUB_OUTPUT
 
     - name: 🐘 PHP Setup
       uses: shivammathur/setup-php@v2
@@ -206,58 +58,47 @@ jobs:
         if [ "${{ inputs.force_init }}" = "true" ] || [ ! -f "composer.json" ]; then
           echo "🚀 Initialisiere neues Craft CMS Projekt..."
           
-          # Temporäres Verzeichnis für Craft CMS
-          mkdir -p temp-craft
-          cd temp-craft
-          
           # Craft CMS Projekt erstellen
           composer create-project craftcms/craft . --no-interaction --no-dev --prefer-dist
           
-          # Dateien ins Root verschieben
-          cd ..
-          cp -r temp-craft/* .
-          cp temp-craft/.env.example .env.example 2>/dev/null || true
-          rm -rf temp-craft
-          
-          # Basic .env erstellen falls nicht vorhanden
-          if [ ! -f ".env" ]; then
-            cat > .env << 'ENV_EOF'
-        # Craft CMS Environment Configuration
-        CRAFT_APP_ID=CraftCMS--craft-projekte
-        CRAFT_ENVIRONMENT=production
-        CRAFT_SECURITY_KEY=changeme-generate-new-key
-        CRAFT_DEV_MODE=false
-        
-        # Database Configuration
-        CRAFT_DB_DRIVER=mysql
-        CRAFT_DB_SERVER=localhost
-        CRAFT_DB_PORT=3306
-        CRAFT_DB_DATABASE=craft_db
-        CRAFT_DB_USER=craft_user
-        CRAFT_DB_PASSWORD=password
-        CRAFT_DB_SCHEMA=
-        CRAFT_DB_TABLE_PREFIX=
-        
-        # URLs
-        CRAFT_WEB_URL=https://your-domain.com
-        CRAFT_WEB_ROOT=/var/www/html/web
-        ENV_EOF
+          # Basic .env.example erstellen
+          if [ ! -f ".env.example" ]; then
+            cat > .env.example << 'ENV_EOF'
+# Craft CMS Environment Configuration
+CRAFT_APP_ID=CraftCMS--craft-projekte
+CRAFT_ENVIRONMENT=production
+CRAFT_SECURITY_KEY=changeme-generate-new-key
+CRAFT_DEV_MODE=false
+
+# Database Configuration  
+CRAFT_DB_DRIVER=mysql
+CRAFT_DB_SERVER=localhost
+CRAFT_DB_PORT=3306
+CRAFT_DB_DATABASE=craft_db
+CRAFT_DB_USER=craft_user
+CRAFT_DB_PASSWORD=password
+
+# URLs
+CRAFT_WEB_URL=https://your-domain.com
+CRAFT_WEB_ROOT=/var/www/html/web
+ENV_EOF
           fi
           
           # .gitignore anpassen
           if [ ! -f ".gitignore" ]; then
             cat > .gitignore << 'GITIGNORE_EOF'
-        .env
-        /vendor/
-        /storage/runtime/
-        /storage/logs/
-        /storage/rebrand/
-        /storage/backups/
-        /web/cpresources/
-        .DS_Store
-        Thumbs.db
-        *.log
-        GITIGNORE_EOF
+.env
+/vendor/
+/storage/runtime/
+/storage/logs/
+/storage/rebrand/
+/storage/backups/
+/web/cpresources/
+.DS_Store
+Thumbs.db
+*.log
+node_modules/
+GITIGNORE_EOF
           fi
           
           project_initialized="true"
@@ -270,7 +111,7 @@ jobs:
 
     - name: 📦 Composer Dependencies installieren
       run: |
-        echo "📦 Installiere/Update Composer Dependencies..."
+        echo "📦 Installiere Composer Dependencies..."
         composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
         echo "✅ Dependencies installiert"
 
@@ -279,66 +120,63 @@ jobs:
       run: |
         echo "📊 Ermittle aktuelle Craft CMS Versionen..."
         
-        if [ -f "composer.json" ]; then
-          echo "✅ composer.json gefunden"
-          current_craft=$(grep -o '"craftcms/cms": "[^"]*"' composer.json | cut -d'"' -f4 || echo "nicht gefunden")
-          echo "current_craft=${current_craft}" >> $GITHUB_OUTPUT
-          echo "🎯 Aktuelle Craft Version Constraint: ${current_craft}"
-        else
-          echo "❌ composer.json nicht gefunden!"
-          exit 1
-        fi
+        current_craft=$(grep -o '"craftcms/cms": "[^"]*"' composer.json | cut -d'"' -f4 || echo "nicht gefunden")
+        echo "current_craft=${current_craft}" >> $GITHUB_OUTPUT
+        echo "🎯 Aktuelle Craft Version Constraint: ${current_craft}"
         
-        # Lock file Versionen
         if [ -f "composer.lock" ]; then
           current_installed=$(jq -r '.packages[] | select(.name=="craftcms/cms") | .version' composer.lock 2>/dev/null || echo "nicht gefunden")
           echo "current_installed=${current_installed}" >> $GITHUB_OUTPUT
           echo "📦 Aktuell installiert: ${current_installed}"
         fi
 
-    - name: 🔄 Composer Update Check
+    - name: 🔄 Update Check
       id: updates
       run: |
         echo "🔍 Prüfe verfügbare Updates..."
         
-        # Composer Update --dry-run für Update-Check
+        # Composer Outdated Check
+        composer outdated --format=json > outdated.json 2>/dev/null || echo "{}" > outdated.json
+        
+        # Composer Update --dry-run
         composer update --dry-run --no-install --no-scripts --no-plugins > update_check.txt 2>&1 || true
         
-        # Updates analysieren
-        if grep -q "craftcms/cms" update_check.txt; then
-          echo "✅ Craft CMS Updates verfügbar!"
+        updates_available="false"
+        update_details=""
+        
+        # Check für Craft CMS Updates
+        if grep -q "craftcms/cms" update_check.txt || [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
           updates_available="true"
           
-          # Update Details extrahieren
-          echo "📋 Update Details:"
-          grep -A2 -B2 "craftcms/cms" update_check.txt || echo "Keine Details verfügbar"
+          if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
+            update_details="🚀 Neue Craft CMS Installation erstellt"
+          else
+            echo "✅ Craft CMS Updates verfügbar!"
+            update_details=$(grep -E "(craftcms/|craft-)" update_check.txt | head -10 || echo "Craft CMS Updates verfügbar")
+          fi
           
-          # Craft-Packages sammeln
-          craft_updates=$(grep -E "(craftcms/|craft-)" update_check.txt | head -10 || echo "Keine Craft Updates gefunden")
+          # Sammle alle Craft-bezogenen Updates
+          craft_packages=$(grep -E "(craftcms/|craft-)" update_check.txt || echo "")
           
-          # Multiline Output für GitHub Actions
+          # Multi-line Output
           {
-            echo "craft_updates<<EOF"
-            echo "${craft_updates}"
+            echo "update_details<<EOF"
+            echo "${update_details}"
+            echo ""
+            if [ -n "${craft_packages}" ]; then
+              echo "Craft Packages:"
+              echo "${craft_packages}"
+            fi
             echo "EOF"
           } >> $GITHUB_OUTPUT
-          
         else
-          echo "ℹ️ Keine Craft CMS Updates verfügbar"
-          updates_available="false"
-          
-          # Falls neue Installation, trotzdem als "Update" behandeln für PR
-          if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-            echo "🚀 Neue Craft Installation - erstelle PR"
-            updates_available="true"
-            echo "craft_updates=Neue Craft CMS Installation erstellt" >> $GITHUB_OUTPUT
-          fi
+          echo "ℹ️ Keine Updates verfügbar"
         fi
         
         echo "updates_available=${updates_available}" >> $GITHUB_OUTPUT
         
-        # Alle verfügbaren Updates loggen
-        echo "📋 Kompletter Update Check:"
+        # Debug Info
+        echo "📋 Update Check Results:"
         cat update_check.txt
 
     - name: 📦 Updates durchführen
@@ -346,17 +184,13 @@ jobs:
       run: |
         echo "🔄 Führe Composer Updates durch..."
         
-        # Backup der aktuellen composer.lock
+        # Backup composer.lock
         cp composer.lock composer.lock.backup
         
-        # Composer Update
+        # Update durchführen
         composer update --no-interaction --prefer-dist --optimize-autoloader --no-dev
         
         echo "✅ Composer Update abgeschlossen"
-        
-        # Änderungen anzeigen
-        echo "📋 Composer.lock Änderungen:"
-        git diff composer.lock || echo "Keine Änderungen in composer.lock"
 
     - name: 📋 Update Summary erstellen
       if: steps.updates.outputs.updates_available == 'true'
@@ -364,43 +198,39 @@ jobs:
       run: |
         echo "📊 Erstelle Update Summary..."
         
-        # Git Änderungen vorbereiten
         git add .
         
-        if git diff --cached --quiet && [ "${{ steps.init.outputs.project_initialized }}" = "false" ]; then
-          echo "ℹ️ Keine Änderungen nach Update"
-          summary_text="Keine Änderungen nach Composer Update"
+        # Action Type bestimmen
+        if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
+          action_type="🚀 Neue Craft CMS Installation"
         else
-          # Update Summary erstellen
-          if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-            action_type="Neue Craft CMS Installation"
-          else
-            action_type="Craft CMS Update"
-          fi
-          
-          cat > UPDATE_SUMMARY.md << SUMMARY_EOF
-        # 🚀 ${action_type}
+          action_type="🔄 Craft CMS Update"
+        fi
         
-        **Update Type:** ${{ steps.info.outputs.update_type }}
-        **Triggered by:** ${{ steps.info.outputs.triggered_by }}
-        **Timestamp:** $(date)
-        **Pre-Update Backup:** ${{ needs.pre-update-backup.outputs.backup_file }}
+        # Update Summary
+        cat > UPDATE_SUMMARY.md << SUMMARY_EOF
+        # ${action_type}
+        
+        **Update Type:** ${{ inputs.update_type || 'scheduled' }}
+        **Timestamp:** $(date '+%Y-%m-%d %H:%M:%S')
+        **Repository:** ${{ github.repository }}
         
         ## 📦 Changes
         
-        ${{ steps.updates.outputs.craft_updates }}
+        ${{ steps.updates.outputs.update_details }}
         
         ## 🔧 Modified Files
         
         \`\`\`
-        $(git diff --cached --name-only)
+        $(git diff --cached --name-only | head -20)
         \`\`\`
         
-        ## 💾 Safety Information
+        ## 🚀 Deployment Information
         
-        - ✅ Database backup created before update
-        - ✅ Backup location: \`/var/backups/craft-cms/$(date +%Y/%m/%d)/\`
-        - ✅ Auto-rollback available if deployment fails
+        ✅ **Automatisiert mit Envoyer:**
+        - Backups werden automatisch vor Deployment erstellt
+        - Zero-Downtime Deployment 
+        - Automatischer Rollback bei Fehlern
         
         ## 🧪 Testing Checklist
         
@@ -408,17 +238,21 @@ jobs:
         - [ ] Content Creation/Editing  
         - [ ] Frontend Display
         - [ ] Plugin Functionality
-        - [ ] Database Migrations
-        - [ ] Environment Configuration
+        - [ ] Database Migrations OK
+        - [ ] Environment Variables OK
+        
+        ## 📋 Next Steps
+        
+        1. **Review this PR** - Check changes
+        2. **Merge when ready** - Envoyer will auto-deploy
+        3. **Monitor deployment** - Check Envoyer dashboard
+        4. **Test live site** - Verify everything works
         
         ---
-        *Auto-generated by GitHub Actions - Craft CMS Auto-Updater*
+        *Auto-generated by GitHub Actions*  
+        *Deployment handled by Envoyer*  
+        *Backups handled by automated system*
         SUMMARY_EOF
-          
-          summary_text=$(head -20 UPDATE_SUMMARY.md)
-        fi
-        
-        echo "summary=${summary_text}" >> $GITHUB_OUTPUT
 
     - name: 🔄 Pull Request erstellen
       if: steps.updates.outputs.updates_available == 'true'
@@ -427,129 +261,79 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: |
-          🔄 ${{ steps.init.outputs.project_initialized == 'true' && 'Initialize Craft CMS project' || 'Auto-update Craft CMS dependencies' }} (${{ steps.info.outputs.update_type }})
+          ${{ steps.init.outputs.project_initialized == 'true' && '🚀 Initialize Craft CMS project' || '🔄 Auto-update Craft CMS dependencies' }}
           
-          - Update Type: ${{ steps.info.outputs.update_type }}
-          - Triggered by: ${{ steps.info.outputs.triggered_by }}
-          - Backup: ${{ needs.pre-update-backup.outputs.backup_file }}
+          - Type: ${{ inputs.update_type || 'scheduled' }}
+          - Timestamp: $(date)
+          - Ready for Envoyer deployment
         title: |
-          🔄 [${{ steps.info.outputs.update_type }}] ${{ steps.init.outputs.project_initialized == 'true' && 'Craft CMS Initial Setup' || 'Craft CMS Auto Update' }} - $(date +%Y-%m-%d)
+          ${{ steps.init.outputs.project_initialized == 'true' && '🚀 [INIT]' || '🔄 [UPDATE]' }} Craft CMS ${{ inputs.update_type || 'Scheduled Update' }} - $(date +%Y-%m-%d)
         body-path: UPDATE_SUMMARY.md
-        branch: auto-update-${{ github.run_id }}
+        branch: craft-update-${{ github.run_id }}
         delete-branch: true
         labels: |
           ${{ steps.init.outputs.project_initialized == 'true' && 'initialization' || 'auto-update' }}
           craft-cms
-          dependencies
-        reviewers: |
-          ${{ github.actor }}
-        assignees: |
-          ${{ github.actor }}
+          envoyer-ready
+        reviewers: ${{ github.actor }}
+        assignees: ${{ github.actor }}
 
-    - name: 📊 Update Results
+    - name: 📊 Workflow Results
       run: |
         if [ "${{ steps.updates.outputs.updates_available }}" = "true" ]; then
           echo "✅ Updates gefunden und PR erstellt!"
-          echo "🔗 PR Nummer: ${{ steps.pr.outputs.pull-request-number }}"
-          echo "🌿 Branch: auto-update-${{ github.run_id }}"
+          echo "🔗 PR: ${{ steps.pr.outputs.pull-request-number }}"
+          echo "🌿 Branch: craft-update-${{ github.run_id }}"
           
           if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
             echo "🚀 Neues Craft CMS Projekt initialisiert"
           fi
+          
+          echo ""
+          echo "📋 Next Steps:"
+          echo "1. Review PR in GitHub"
+          echo "2. Merge when ready"  
+          echo "3. Envoyer handles deployment"
+          echo "4. Automated backups run before deploy"
         else
-          echo "ℹ️ Keine Updates verfügbar - kein PR erstellt"
+          echo "ℹ️ Keine Updates verfügbar - alles aktuell!"
         fi
-        
-        echo "💾 Pre-Update Backup: ${{ needs.pre-update-backup.outputs.backup_file }}"
 
   notification:
-    name: 📱 Update Notification
+    name: 📧 Update Notification
     runs-on: ubuntu-latest
-    needs: [pre-update-backup, craft-update]
-    if: always()
+    needs: craft-update
+    if: always() && needs.craft-update.outputs.updates_available == 'true'
     
     steps:
-    - name: 📧 Notification Status ermitteln
-      id: status
-      run: |
-        # Status Logic in Shell Script statt GitHub Expression
-        if [ "${{ needs.craft-update.outputs.updates_available }}" = "true" ] && [ -n "${{ needs.craft-update.outputs.pr_number }}" ]; then
-          status="✅ Updates/Initialisierung erfolgreich - PR erstellt (Nummer: ${{ needs.craft-update.outputs.pr_number }})"
-        elif [ "${{ needs.craft-update.outputs.updates_available }}" = "true" ]; then
-          status="⚠️ Updates gefunden - PR Fehler"
-        else
-          status="ℹ️ Keine Updates verfügbar"
-        fi
-        
-        if [ "${{ needs.craft-update.outputs.project_initialized }}" = "true" ]; then
-          action_type="Neue Craft CMS Installation"
-        else
-          action_type="Update Check"
-        fi
-        
-        echo "status=${status}" >> $GITHUB_OUTPUT
-        echo "action_type=${action_type}" >> $GITHUB_OUTPUT
-
-    - name: 📧 E-Mail Notification
+    - name: 📧 E-Mail Benachrichtigung
       uses: dawidd6/action-send-mail@v3
+      if: vars.MAIL_HOST != ''
       with:
-        server_address: ${{ secrets.MAIL_HOST }}
-        server_port: ${{ secrets.MAIL_PORT }}
+        server_address: ${{ vars.MAIL_HOST }}
+        server_port: ${{ vars.MAIL_PORT || '587' }}
         username: ${{ secrets.MAIL_USERNAME }}
         password: ${{ secrets.MAIL_PASSWORD }}
-        subject: 'Craft CMS ${{ steps.status.outputs.action_type }} Complete - ${{ needs.craft-update.outputs.update_type || ''scheduled'' }}'
+        subject: 'Craft CMS ${{ needs.craft-update.outputs.project_initialized == ''true'' && ''Project Initialized'' || ''Updates Available'' }} - ${{ github.repository }}'
         to: tim.steegmueller@farbcode.net
-        from: ${{ secrets.MAIL_FROM }}
+        from: ${{ vars.MAIL_FROM || secrets.MAIL_USERNAME }}
         body: |
-          Craft CMS Auto-Update Bericht
+          Craft CMS Update Check Completed
           
-          **Status:** ${{ steps.status.outputs.status }}
+          **Status:** ${{ needs.craft-update.outputs.project_initialized == 'true' && '🚀 New project initialized' || '🔄 Updates available' }}
+          **Type:** ${{ github.event.inputs.update_type || 'scheduled' }}
+          **Repository:** ${{ github.repository }}
+          **PR Number:** ${{ needs.craft-update.outputs.pr_number }}
           
-          **Action Type:** ${{ steps.status.outputs.action_type }}
-          **Update Type:** ${{ needs.craft-update.outputs.update_type || 'scheduled' }}
-          **Triggered By:** ${{ needs.craft-update.outputs.triggered_by || 'github-scheduler' }}
-          **Pre-Update Backup:** ${{ needs.pre-update-backup.outputs.backup_file }}
+          **Next Steps:**
+          1. Review PR: https://github.com/${{ github.repository }}/pull/${{ needs.craft-update.outputs.pr_number }}
+          2. Merge when ready
+          3. Envoyer will handle deployment
           
-          Repository: https://github.com/${{ github.repository }}
+          **Deployment Process:**
+          ✅ Automated backups before deployment  
+          ✅ Zero-downtime deployment via Envoyer  
+          ✅ Automatic rollback on failure  
           
-          Auto-generated by GitHub Actions - Craft CMS Auto-Updater
-        secure: true
-
-  cleanup:
-    name: 🧹 Cleanup
-    runs-on: ubuntu-latest
-    needs: [pre-update-backup, craft-update]
-    if: always()
-    
-    steps:
-    - name: 🧹 Server Cleanup
-      run: |
-        if [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-          echo "🧹 Cleanup alter Backup-Dateien..."
-          
-          # SSH Key Setup
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
-          ssh -o StrictHostKeyChecking=no \
-              -o ConnectTimeout=30 \
-              -o BatchMode=yes \
-              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
-            
-            # Alte Update-Backups löschen (älter als 30 Tage)
-            find /var/backups/craft-cms -name "*pre_update*.sql.gz" -mtime +30 -delete 2>/dev/null || true
-            find /var/backups/craft-cms -name "*pre_update*.info" -mtime +30 -delete 2>/dev/null || true
-            
-            # Leere Verzeichnisse entfernen
-            find /var/backups/craft-cms -type d -empty -delete 2>/dev/null || true
-            
-            echo "✅ Cleanup abgeschlossen"
-            
-            # Backup-Status anzeigen
-            echo "📊 Aktuelle Backup-Situation:"
-            du -sh /var/backups/craft-cms/ 2>/dev/null || echo "Backup-Verzeichnis leer"
-        EOF
-        else
-          echo "ℹ️ Kein SSH konfiguriert - überspringe Server Cleanup"
-        fi
+          ---
+          Generated by GitHub Actions
