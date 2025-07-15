@@ -36,7 +36,7 @@ jobs:
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
 
-      - name: 🔍 Debug: Show PHP version
+      - name: 🔍 
         run: php -v
 
       - name: 📦 Install Composer Dependencies
