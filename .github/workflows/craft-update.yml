@@ -66,7 +66,6 @@ jobs:
             cat > .env.example << 'ENV_EOF'
 # Craft CMS Environment Configuration
 CRAFT_APP_ID=CraftCMS--craft-projekte
-CRAFT_ENVIRONMENT=production
 CRAFT_SECURITY_KEY=changeme-generate-new-key
 CRAFT_DEV_MODE=false
 
