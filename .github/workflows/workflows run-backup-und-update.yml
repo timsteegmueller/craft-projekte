@@ -26,12 +26,14 @@ jobs:
 
     steps:
       - name: 📥 Checkout Repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v3  
+
+
 
       - name: 📦 Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.1
+          php-version: 8.2
           extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
