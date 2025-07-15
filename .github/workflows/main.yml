@@ -2,91 +2,219 @@ name: 💾 CraftCMS Auto Backup & Update
 
 on:
   schedule:
-    - cron: '0 3 * * 0'
-  workflow_dispatch:
+    - cron: '0 3 * * 0'  # Jeden Sonntag um 3 Uhr
+  workflow_dispatch:     # Manuelle Ausführung
   repository_dispatch:
     types: [run-backup-und-update]
+
+env:
+  COMPOSER_ALLOW_SUPERUSER: 1
+  COMPOSER_NO_INTERACTION: 1
 
 jobs:
   craft-auto-update:
     runs-on: ubuntu-latest
-
-    services:
-      mysql:
-        image: mysql:5.7
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: craft
-          MYSQL_USER: craft
-          MYSQL_PASSWORD: craft
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=3
+    
+    # Matrix für mehrere Projekte (wie in deiner DoD gefordert)
+    strategy:
+      matrix:
+        project:
+          - name: "mein-test-projekt"
+            server: "farbcode.de"
+            path: "/var/www/mein-test-projekt"
+            domain: "https://mein-test-projekt.farbcode.de"
+            db_name: "craft_test"
+          - name: "hauptprojekt"
+            server: "farbcode.de" 
+            path: "/var/www/hauptprojekt"
+            domain: "https://hauptprojekt.farbcode.de"
+            db_name: "craft_main"
 
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v3
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: 📦 PHP Setup
+      - name: 📦 Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: '8.2'
           extensions: mbstring, pdo, mysql, dom, curl, intl, gd, zip, fileinfo
           ini-values: memory_limit=512M
-          coverage: none
+          tools: composer:v2
 
-      - name: 🧰 Composer Install
-        run: composer install --no-interaction --prefer-dist --optimize-autoloader
-        working-directory: ./mein-test-projekt
+      - name: 🔑 Setup SSH Key
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: 📄 Schreibe .env-Datei für Craft
+      - name: 🛡️ Add Server to Known Hosts
         run: |
-            echo "APP_ID=craft-update" >> .env
-            echo "CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}" >> .env
-            echo "DB_DRIVER=mysql" >> .env
-            echo "DB_SERVER=127.0.0.1" >> .env
-            echo "DB_PORT=3306" >> .env
-            echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-            echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-            echo "DB_DATABASE=${{ secrets.DB_NAME }}" >> .env
-            echo "DB_TABLE_PREFIX=" >> .env
-            echo "DB_SCHEMA=public" >> .env
-                working-directory: ./mein-test-projekt
+          ssh-keyscan -H ${{ matrix.project.server }} >> ~/.ssh/known_hosts
 
-
-
-                          
-               - name: 📄 Schreibe .env-Datei für Craft
-            run: |
-              echo "APP_ID=craft-update" > .env
-              echo "CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}" >> .env
-              echo "DB_DRIVER=mysql" >> .env
-              echo "DB_SERVER=127.0.0.1" >> .env
-              echo "DB_PORT=3306" >> .env
-              echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-              echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-              echo "DB_DATABASE=${{ secrets.DB_NAME }}" >> .env
-              echo "DB_TABLE_PREFIX=" >> .env
-              echo "DB_SCHEMA=public" >> .env
-            working-directory: ./mein-test-projekt
+      - name: 💾 Create Production Database Backup
+        run: |
+          echo "Creating backup for ${{ matrix.project.name }}..."
+          BACKUP_FILE="backup_${{ matrix.project.name }}_$(date +%Y%m%d_%H%M%S).sql"
           
-              - name: 📦 Craft Update ausführen
-                run:
-                     hp craft update all
-                  working-directory: ./mein-test-projekt
-    
+          ssh ${{ secrets.SSH_USER }}@${{ matrix.project.server }} << EOF
+            cd ${{ matrix.project.path }}
+            mkdir -p backups
+            mysqldump -u ${{ secrets.DB_USER }} -p'${{ secrets.DB_PASSWORD }}' ${{ matrix.project.db_name }} > backups/$BACKUP_FILE
+            echo "✅ Database backup created: $BACKUP_FILE"
+            ls -la backups/ | tail -5
+          EOF
 
-      - name: 💾 Backup DB
+      - name: 🔄 Update Craft CMS on Server  
         run: |
-          mkdir -p ./backups
-          mysqldump -h 127.0.0.1 -u craft -pcraft craft > ./backups/backup.sql
-        working-directory: ./mein-test-projekt
-      
-      - name: 🔁 Run Craft Update
-        run: 
-          php craft update all.
-        working-directory: ./mein-test-projekt
+          echo "🚀 Updating ${{ matrix.project.name }} on server..."
+          
+          ssh ${{ secrets.SSH_USER }}@${{ matrix.project.server }} << EOF
+            cd ${{ matrix.project.path }}
+            
+            echo "📦 Updating Composer dependencies..."
+            composer update --no-dev --optimize-autoloader
+            
+            echo "🔄 Running Craft CMS updates..."
+            php craft update all --interactive=0
+            
+            echo "🗃️ Running database migrations..."
+            php craft migrate/all --interactive=0
+            
+            echo "🧹 Clearing caches..."
+            php craft clear-caches/all
+            php craft invalidate-tags/all
+            
+            echo "✅ Update completed for ${{ matrix.project.name }}!"
+          EOF
 
-      - name: ✅ Done
-        run: echo "🎉 Update completed successfully!"
- 
+      - name: 🏥 Health Check
+        run: |
+          echo "🏥 Performing health check for ${{ matrix.project.domain }}..."
+          
+          # Wait for server to be ready
+          sleep 10
+          
+          # Check HTTP status
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" ${{ matrix.project.domain }})
+          
+          if [ $RESPONSE -eq 200 ]; then
+            echo "✅ Health check passed! ${{ matrix.project.domain }} responding with HTTP 200"
+            echo "health_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Health check failed! ${{ matrix.project.domain }} responded with HTTP $RESPONSE"
+            echo "health_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 📝 Generate Update Report
+        id: report
+        if: success()
+        run: |
+          echo "📝 Generating update report..."
+          
+          # Get updated packages info from server
+          UPDATES_INFO=$(ssh ${{ secrets.SSH_USER }}@${{ matrix.project.server }} "cd ${{ matrix.project.path }} && composer show --outdated --direct --format=json" || echo "[]")
+          
+          REPORT="## 🚀 Craft CMS Update Report - ${{ matrix.project.name }}
+
+          **Timestamp:** $(date '+%d.%m.%Y %H:%M:%S UTC')
+          **Project:** ${{ matrix.project.name }}
+          **Domain:** ${{ matrix.project.domain }}
+          **Server:** ${{ matrix.project.server }}
+
+          ### ✅ Completed Actions:
+          - 💾 Database backup created on production server
+          - 📦 Composer dependencies updated
+          - 🔄 Craft CMS core updated
+          - 🗃️ Database migrations executed
+          - 🧹 All caches cleared
+          - 🏥 Health check passed (HTTP 200)
+
+          ### 🔧 Technical Details:
+          - **Backup Location:** \`${{ matrix.project.path }}/backups/\`
+          - **PHP Version:** 8.2
+          - **Craft Update Command:** \`php craft update all\`
+          - **Migration Status:** All migrations applied
+
+          **Status: 🟢 Ready for review and production use!**
+
+          ---
+          *Triggered by N8N Automation | Generated by GitHub Actions*"
+          
+          echo "report_content<<EOF" >> $GITHUB_OUTPUT
+          echo "$REPORT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 📤 Create Pull Request
+        if: success()
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "🤖 Automated Craft CMS update for ${{ matrix.project.name }}"
+          title: "🔄 Automated Craft CMS Update - ${{ matrix.project.name }}"
+          body: ${{ steps.report.outputs.report_content }}
+          branch: "automated-update-${{ matrix.project.name }}-${{ github.run_number }}"
+          delete-branch: true
+
+      - name: 📊 Notify N8N Success
+        if: success()
+        run: |
+          echo "📊 Notifying N8N about successful completion..."
+          curl -X POST "https://n8n.farbcode.de/webhook/craft-update-success" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "project": "${{ matrix.project.name }}",
+              "status": "success", 
+              "domain": "${{ matrix.project.domain }}",
+              "timestamp": "'$(date -Iseconds)'",
+              "github_run": "${{ github.run_number }}",
+              "health_check": "passed"
+            }' || echo "N8N notification failed, continuing..."
+
+      - name: 🚨 Notify N8N Failure
+        if: failure()
+        run: |
+          echo "🚨 Notifying N8N about failure..."
+          curl -X POST "https://n8n.farbcode.de/webhook/craft-update-failure" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "project": "${{ matrix.project.name }}",
+              "status": "failed",
+              "domain": "${{ matrix.project.domain }}",
+              "timestamp": "'$(date -Iseconds)'",
+              "github_run": "${{ github.run_number }}",
+              "error": "Update or health check failed"
+            }' || echo "N8N notification failed"
+
+      - name: 🔄 Emergency Rollback (if needed)
+        if: failure()
+        run: |
+          echo "🔄 Attempting emergency rollback..."
+          
+          ssh ${{ secrets.SSH_USER }}@${{ matrix.project.server }} << EOF
+            cd ${{ matrix.project.path }}
+            
+            echo "Finding latest backup..."
+            LATEST_BACKUP=\$(ls -t backups/backup_${{ matrix.project.name }}_*.sql | head -1)
+            
+            if [ -f "\$LATEST_BACKUP" ]; then
+              echo "🔄 Restoring database from \$LATEST_BACKUP"
+              mysql -u ${{ secrets.DB_USER }} -p'${{ secrets.DB_PASSWORD }}' ${{ matrix.project.db_name }} < "\$LATEST_BACKUP"
+              echo "✅ Database restored successfully"
+            else
+              echo "❌ No backup found for rollback"
+            fi
+          EOF
+
+  # Separater Job für finale Berichte
+  final-report:
+    needs: craft-auto-update
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: 📋 Generate Final Summary
+        run: |
+          echo "📋 Generating final automation summary..."
+          echo "All project updates completed. Check individual job results above."
+          echo "N8N will receive notifications and can proceed with Slack alerts."
