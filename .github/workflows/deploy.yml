@@ -1,0 +1,51 @@
+name: Deploy Changes
+
+on:
+  push:
+    branches: [main]  # Startet nach Merge
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hole den Code
+        uses: actions/checkout@v3
+
+      - name: Mache DB-Backup
+        uses: appleboy/ssh-action@v0.1.4
+        with:
+          host: [DEIN_SERVER_HOST]
+          username: [DEIN_SERVER_USER]
+          key: [DEIN_SSH_KEY]  # Privater Key als Secret
+          script: |
+            # Backup der DB – speichere es sicher
+            mysqldump -u [DB_USER] -p[DB_PASS] [DB_NAME] > backup-$(date +%Y-%m-%d).sql
+            # Hier könntest du es zu S3 kopieren, z.B. aws s3 cp ...
+
+      - name: Trigger Starface Backup
+        run: |
+          # Sende Request – prüfe auf 200 OK
+          STATUS=$(curl -X POST https://[STARFACE_API_URL]/backup -H "Authorization: Bearer [DEIN_STARFACE_TOKEN]" -d '{"project": "[DEIN_PROJEKT_NAME]"}' -s -o /dev/null -w "%{http_code}")
+          if [ "$STATUS" != "200" ]; then echo "Starface Backup failed!"; exit 1; fi
+
+      - name: Deploye die Änderungen
+        run: envoy run deploy  # Ruft dein Envoy-Skript – stelle sicher, Envoy ist installiert
+
+      - name: Prüfe, ob alles läuft
+        id: health
+        run: |
+          # Hole den HTTP-Status – sollte 200 sein
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://[DEINE_SITE_URL])
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          if [ "$STATUS" != "200" ]; then exit 1; fi  # Wenn nicht, failt der Job
+
+      - name: Behandle Fehler
+        if: failure() || steps.health.outputs.status != '200'
+        run: |
+          # Rollback starten und alerten
+          envoy run rollback
+          echo "Problem beim Deployment – Status war ${steps.health.outputs.status}. Rollback läuft." | curl -X POST -d @- [DEIN_SLACK_WEBHOOK]
+
+      - name: Sage Bescheid, wenn alles gut ist
+        if: success()
+        run: echo "Deployment hat geklappt!" | curl -X POST -d @- [DEIN_SLACK_WEBHOOK]
