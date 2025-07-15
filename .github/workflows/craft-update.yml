@@ -321,8 +321,13 @@ jobs:
     
     steps:
     - name: 📱 Slack Notification
-      if: secrets.SLACK_WEBHOOK_URL != ''
       run: |
+        # Prüfe ob Slack Webhook verfügbar ist
+        if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+          echo "ℹ️ Kein Slack Webhook konfiguriert - überspringe Benachrichtigung"
+          exit 0
+        fi
+        
         # Status bestimmen
         if [ "${{ needs.craft-update.outputs.updates_available }}" = "true" ]; then
           if [ -n "${{ needs.craft-update.outputs.pr_number }}" ]; then
