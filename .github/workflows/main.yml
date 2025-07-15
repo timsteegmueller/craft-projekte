@@ -55,22 +55,26 @@ jobs:
 
 
 
-                
-      - name: 📄 Schreibe .env-Datei für Craft
-          working-directory:b -./mein-test-projekt
-        run: |
-            cat <<EOF > .env
-            APP_ID=craft-update
-            CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}
-            DB_DRIVER=mysql
-            DB_SERVER=127.0.0.1
-            DB_PORT=3306
-            DB_USER=${{ secrets.DB_USER }}
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            DB_DATABASE=${{ secrets.DB_NAME }}
-            DB_TABLE_PREFIX=
-            DB_SCHEMA=public
-            EOF
+                          
+               - name: 📄 Schreibe .env-Datei für Craft
+            run: |
+              echo "APP_ID=craft-update" > .env
+              echo "CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}" >> .env
+              echo "DB_DRIVER=mysql" >> .env
+              echo "DB_SERVER=127.0.0.1" >> .env
+              echo "DB_PORT=3306" >> .env
+              echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+              echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+              echo "DB_DATABASE=${{ secrets.DB_NAME }}" >> .env
+              echo "DB_TABLE_PREFIX=" >> .env
+              echo "DB_SCHEMA=public" >> .env
+            working-directory: ./mein-test-projekt
+          
+              - name: 📦 Craft Update ausführen
+                run:
+                     hp craft update all
+                  working-directory: ./mein-test-projekt
+    
 
       - name: 💾 Backup DB
         run: |
