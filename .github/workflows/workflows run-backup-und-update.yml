@@ -1,27 +1,72 @@
+name: Craft CMS Auto-Backup & Update
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
 jobs:
-  craft-backup-update:
+  run-craft-backup-update:
     runs-on: ubuntu-latest
-    name: Craft Backup & Update
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: craft
+      MYSQL_USER: craft
+      MYSQL_PASSWORD: secret
 
     steps:
-      - name: 📥 Repository auschecken
+      - name: 📥 Repo auschecken
         uses: actions/checkout@v4
 
-      - name: ⚙️ PHP einrichten
+      - name: 🐘 Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
-          extensions: mbstring, intl, pdo, pdo_mysql
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql, intl, curl, dom, zip, json
           tools: composer
 
-      - name: 📦 Composer Abhängigkeiten installieren
-        run: composer install --no-interaction --prefer-dist
-        working-directory: mein-test-projekt
+      - name: 🔍 Finde `composer.json` im Projekt
+        id: composer-locate
+        run: |
+          FOUND_PATH=$(find . -name "composer.json" | head -n 1 | xargs dirname)
+          echo "COMPOSER_DIR=$FOUND_PATH" >> $GITHUB_ENV
 
-      - name: 💾 Datenbank-Backup durchführen
-        run: php craft backup/db
-        working-directory: mein-test-projekt
+      - name: 📦 Composer installieren
+        run: |
+          cd "$COMPOSER_DIR"
+          composer install --no-interaction --no-progress --optimize-autoloader
 
-      - name: 🆙 Craft Updates installieren
-        run: php craft update/all
-        working-directory: mein-test-projekt
+      - name: 🐬 Starte temporäre MySQL Datenbank
+        uses: mirromutth/mysql-action@v1.1
+        with:
+          mysql version: '5.7'
+          mysql database: ${{ env.MYSQL_DATABASE }}
+          mysql user: ${{ env.MYSQL_USER }}
+          mysql password: ${{ env.MYSQL_PASSWORD }}
+          mysql root password: ${{ env.MYSQL_ROOT_PASSWORD }}
+
+      - name: 🧪 Starte Craft Backup
+        run: |
+          cd "$COMPOSER_DIR"
+          if [ -f "craft" ]; then
+            php craft backup/db
+          else
+            echo "❌ Keine Craft CLI gefunden in $COMPOSER_DIR"
+            exit 1
+          fi
+
+      - name: 🚀 Führe PHP Update aus (Composer)
+        run: |
+          cd "$COMPOSER_DIR"
+          composer update --no-interaction --no-progress
+
+      - name: 🔁 n8n Webhook aufrufen
+        run: |
+          curl -X POST https://n8n.deine-webhook-url.de/webhook/test-craft-update \
+            -H "Content-Type: application/json" \
+            -d '{"repo": "${{ github.repository }}", "status": "done", "trigger": "github-action"}'
