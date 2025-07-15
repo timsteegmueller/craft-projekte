@@ -66,37 +66,7 @@ jobs:
             cat > .env.example << 'ENV_EOF'
 
 
-# Database Configuration  
-CRAFT_DB_DRIVER=mysql
-CRAFT_DB_SERVER=localhost
-CRAFT_DB_PORT=3306
-CRAFT_DB_DATABASE=craft_db
-CRAFT_DB_USER=craft_user
-CRAFT_DB_PASSWORD=password
 
-# URLs
-CRAFT_WEB_URL=https://your-domain.com
-CRAFT_WEB_ROOT=/var/www/html/web
-ENV_EOF
-          fi
-          
-          # .gitignore anpassen
-          if [ ! -f ".gitignore" ]; then
-            cat > .gitignore << 'GITIGNORE_EOF'
-.env
-/vendor/
-/storage/runtime/
-/storage/logs/
-/storage/rebrand/
-/storage/backups/
-/web/cpresources/
-.DS_Store
-Thumbs.db
-*.log
-node_modules/
-GITIGNORE_EOF
-          fi
-          
           project_initialized="true"
           echo "✅ Craft CMS Projekt initialisiert"
         else
