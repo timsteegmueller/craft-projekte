@@ -51,7 +51,7 @@ jobs:
             exit 1
           fi
 
-        - name: 📋 Git Commit vorbereiten
+      - name: 📋 Git Commit vorbereiten
         if: steps.update.outputs.update_needed == 'true'
         run: |
           git config user.name "GitHub Actions"
@@ -59,19 +59,5 @@ jobs:
           git add -A
           git commit -m "🔄 Automatisches Craft CMS Update" || echo "⚠️ Nichts zu committen"
 
-      - name: 🔁 Create PR
-        if: steps.update.outputs.update_needed == 'true'
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🔄 Auto Update für $DB_NAME"
-          title: "Update Craft CMS – ${{ env.DB_NAME }}"
-          branch: update-${{ github.run_id }}
-          delete-branch: true
-          body: |
-            Automatisches Update über GitHub Actions
 
-            - Datenbank-Backup durchgeführt
-            - Composer Update angewendet
-            - Healthcheck: https://$SITE_HOST/
-
+     
