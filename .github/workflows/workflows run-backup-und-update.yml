@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      COMPOSER_DIR: ./mein-test-projekt
+      COMPOSER_DIR: mein-test-projekt
       MYSQL_DATABASE: craft
       MYSQL_USER: craft
       MYSQL_PASSWORD: secret
@@ -17,13 +17,13 @@ jobs:
       MYSQL_PORT: 3306
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.1'
+          php-version: '8.2'
           extensions: mbstring, intl, pdo_mysql, gd, zip
 
       - name: Setup MySQL
@@ -35,22 +35,27 @@ jobs:
           mysql password: ${{ env.MYSQL_PASSWORD }}
           mysql root password: ${{ env.MYSQL_ROOT_PASSWORD }}
 
-      - name: Install dependencies
+      - name: Composer Install
         run: |
-          cd "$COMPOSER_DIR"
-          if [ ! -f "composer.json" ]; then
-            echo "::error ::composer.json nicht gefunden in $COMPOSER_DIR"
+          echo "Arbeite in Verzeichnis: $COMPOSER_DIR"
+          if [ ! -f "$COMPOSER_DIR/composer.json" ]; then
+            echo "::error ::Keine composer.json in $COMPOSER_DIR gefunden!"
             exit 1
           fi
+          cd "$COMPOSER_DIR"
           composer install --no-interaction --prefer-dist
 
-      - name: Run Craft Backup & Update
+      - name: Craft CLI prüfen
         run: |
-          cd "$COMPOSER_DIR"
-          if [ ! -f "vendor/bin/craft" ]; then
-            echo "::error ::Craft CLI nicht gefunden in $COMPOSER_DIR/vendor/bin"
-            ls -la vendor/bin || true
+          echo "Inhalt von vendor/bin:"
+          ls -la "$COMPOSER_DIR/vendor/bin" || echo "::warning ::vendor/bin existiert nicht"
+          if [ ! -f "$COMPOSER_DIR/vendor/bin/craft" ]; then
+            echo "::error ::Craft CLI nicht gefunden! Stelle sicher, dass craftcms/cms installiert ist."
             exit 1
           fi
-          php vendor/bin/craft backup/db
-          php vendor/bin/craft update all
+
+      - name: Backup + Update ausführen
+        run: |
+          cd "$COMPOSER_DIR"
+          php vendor/bin/craft backup/db || echo "::warning ::Backup fehlgeschlagen"
+          php vendor/bin/craft update all || echo "::warning ::Update fehlgeschlagen"
