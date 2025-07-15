@@ -37,6 +37,13 @@ jobs:
           else
             echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
+      - name: 🐬 MySQL starten
+        uses: mirromutth/mysql-action@v1.1
+        with:
+          mysql version: '5.7'
+          mysql database: ${{ secrets.DB_NAME }}
+          mysql user: ${{ secrets.DB_USER }}
+          mysql password: ${{ secrets.DB_PASS }}
 
       - name: 🗄️ Datenbank-Dump
         run: |
