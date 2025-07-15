@@ -1,0 +1,43 @@
+name: 🔍 SSH Connection Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 🔍 SSH Debug Info
+      run: |
+        echo "🔍 SSH Test gestartet..."
+        echo "Host: ${{ secrets.SSH_HOST }}"
+        echo "User: ${{ secrets.SSH_USER }}"
+        echo "Port: ${{ secrets.SSH_PORT || '22' }}"
+        
+    - name: 🔑 SSH Key Setup
+      run: |
+        # SSH Key vorbereiten
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        
+        # SSH Config
+        cat >> ~/.ssh/config << EOF
+        Host target
+          HostName ${{ secrets.SSH_HOST }}
+          User ${{ secrets.SSH_USER }}
+          Port ${{ secrets.SSH_PORT || '22' }}
+          IdentityFile ~/.ssh/id_rsa
+          StrictHostKeyChecking no
+          ConnectTimeout 10
+        EOF
+        
+    - name: 🔍 Basic SSH Test
+      run: |
+        echo "🔍 Teste SSH-Verbindung..."
+        ssh target "echo '✅ SSH Connection successful!'; hostname; whoami; date"
+        
+    - name: 🗄️ MySQL Test
+      run: |
+        echo "🔍 Teste MySQL..."
+        ssh target "mysql --version; systemctl status mysql"
