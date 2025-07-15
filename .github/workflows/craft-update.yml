@@ -64,10 +64,7 @@ jobs:
           # Basic .env.example erstellen
           if [ ! -f ".env.example" ]; then
             cat > .env.example << 'ENV_EOF'
-# Craft CMS Environment Configuration
-CRAFT_APP_ID=CraftCMS--craft-projekte
-CRAFT_SECURITY_KEY=changeme-generate-new-key
-CRAFT_DEV_MODE=false
+
 
 # Database Configuration  
 CRAFT_DB_DRIVER=mysql
