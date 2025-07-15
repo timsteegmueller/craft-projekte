@@ -42,11 +42,12 @@ jobs:
       - name: 💾 Backup DB
         run: |
           mkdir -p ./backups
-          mysqldump -h 127.0.0.1 -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} ${{ secrets.DB_NAME }} > ./backups/backup.sql
+          mysqldump -h 127.0.0.1 -u craft -pcraft craft > ./backups/backup.sql
         working-directory: ./mein-test-projekt
-
+      
       - name: 🔁 Run Craft Update
-        run: php craft update all
+        run: 
+          php craft update all.
         working-directory: ./mein-test-projekt
 
       - name: ✅ Done
