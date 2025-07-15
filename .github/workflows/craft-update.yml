@@ -1,4 +1,4 @@
-name: 🔄 Modular Craft CMS Update
+name: 🔄 Craft CMS Auto-Update + DB Backup
 
 on:
   repository_dispatch:
@@ -7,72 +7,75 @@ on:
 jobs:
   update-craft:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
+    env:
+      WORK_DIR: ${{ github.event.client_payload.project_path || 'craft' }}
 
     steps:
       - name: 📥 Repo auschecken
         uses: actions/checkout@v4
 
-      - name: 🐘 PHP + Composer Setup
+      - name: 🐘 PHP & Composer
         uses: shivammathur/setup-php@v2
         with:
-          php-version: ${{ github.event.client_payload.php_version || '8.1' }}
-          tools: composer:v2
+          php-version: '8.1'
+          tools: composer
           extensions: mbstring, intl, pdo_mysql, gd, zip
 
-      - name: 🔄 In Projektverzeichnis wechseln
-        run: |
-          export WORK_DIR="${{ github.event.client_payload.project_path }}"
-          echo "Arbeite im Verzeichnis: $WORK_DIR"
-          cd "$WORK_DIR"
-          
-          composer install --no-dev --no-interaction || true
-          composer update --dry-run >dryrun.txt || true
-
-          if grep -q 'craftcms/cms' dryrun.txt; then
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-            composer update --no-dev --no-interaction || true
-          else
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-          fi
       - name: 🐬 MySQL starten
         uses: mirromutth/mysql-action@v1.1
         with:
           mysql version: '5.7'
-          mysql database: ${{ github.event.client_payload.db_name }}
-          mysql user: ${{ github.event.client_payload.db_user }}
-          mysql password: ${{ github.event.client_payload.db_pass }}
+          mysql database: craftdb
+          mysql user: root
+          mysql password: secret
+          mysql root password: secret
 
-      - name: 🗄️ Datenbank-Dump
+      - name: 🔄 Composer Update ausführen
+        id: update
+        run: |
+          echo "🧭 Arbeitsverzeichnis: $WORK_DIR"
+          cd "$WORK_DIR"
+
+          if [ ! -f "composer.json" ]; then
+            echo "::error ::Keine composer.json in $WORK_DIR gefunden"
+            exit 1
+          fi
+
+          composer install --no-dev --no-interaction
+          composer update --dry-run > dryrun.txt || true
+
+          if grep -q 'craftcms/cms' dryrun.txt; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            composer update --no-dev --no-interaction
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🗄️ MySQL Dump
         run: |
           mkdir -p backup
-          mysqldump -h 127.0.0.1 \
-            -u"${{ github.event.client_payload.db_user }}" \
-            -p"${{ github.event.client_payload.db_pass }}" \
-            "${{ github.event.client_payload.db_name }}" > backup/db-$(date +%Y%m%d%H%M%S).sql
+          mysqldump -h 127.0.0.1 -uroot -psecret craftdb > backup/db-$(date +%Y%m%d%H%M%S).sql
 
-      - name: 📝 Git commit & PR
-        if: steps.update-craft.outputs.update_needed == 'true'
+      - name: 📋 Änderungen committen
+        if: steps.update.outputs.update_needed == 'true'
         run: |
-          git config user.name "Craft Bot"
-          git config user.email "craft@bot.farbcode"
+          git config user.name "CraftBot"
+          git config user.email "craft@farbcode.net"
           git add -A
-          git commit -m "🔄 Update für Craft CMS bei Kunde: ${{ github.event.client_payload.project_path }}" || echo "⚠️ Nichts zu committen"
+          git commit -m "🔄 Update Craft CMS in $WORK_DIR" || echo "⚠️ Keine Änderungen"
 
       - name: 🔁 Pull Request erstellen
-        if: steps.update-craft.outputs.update_needed == 'true'
+        if: steps.update.outputs.update_needed == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🔄 Craft CMS Update für ${{ github.event.client_payload.project_path }}"
-          title: "🔄 CMS Update (${{ github.event.client_payload.project_path }})"
+          commit-message: "🔄 Update Craft CMS im Projekt $WORK_DIR"
+          title: "🔄 Auto-Update ($WORK_DIR)"
           branch: update-${{ github.run_id }}
           delete-branch: true
 
       - name: 💾 Backup bereitstellen
         uses: actions/upload-artifact@v4
         with:
-          name: db-backup-${{ github.event.client_payload.project_path }}
+          name: db-backup
           path: backup/
