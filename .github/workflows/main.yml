@@ -46,7 +46,7 @@ jobs:
         run: php craft update all
         working-directory: ./mein-test-projekt
 
-      - name: 🧪 Optional: Test oder Linting
+      - name: 🧪 
         run: echo "Here you can add tests."
 
       - name: ✅ Done
