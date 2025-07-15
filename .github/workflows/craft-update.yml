@@ -2,304 +2,110 @@ name: 🔄 Craft CMS Update Check & PR
 
 on:
   schedule:
-    - cron: '0 3 * * 0'  # Jeden Sonntag um 3 Uhr
+    - cron: '0 3 * * 0'          # jeden Sonntag um 03 Uhr
   workflow_dispatch:
     inputs:
       update_type:
         description: 'Update Type'
-        required: false
         default: 'manual'
         type: choice
-        options:
-          - manual
-          - scheduled
-          - security-update
+        options: [manual, scheduled, security-update]
       force_init:
         description: 'Force new Craft installation'
-        required: false
         default: false
         type: boolean
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pfade / Konstanten an einer Stelle
+  DB_BACKUP_FILE: db-backup-$(date +%Y%m%d%H%M%S).sql
+
 jobs:
   craft-update:
-    name: 🔄 Craft CMS Update Check
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 30
+
     steps:
     - name: 🔄 Repository auschecken
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 🐘 PHP Setup
+    - name: 🐘 PHP 8.1 + Composer 2 install
       uses: shivammathur/setup-php@v2
       with:
         php-version: '8.1'
-        extensions: mbstring, xml, ctype, iconv, intl, pdo_mysql, dom, filter, gd, json, zip
+        extensions: mbstring, xml, intl, pdo_mysql, gd, zip
         tools: composer:v2
 
-    - name: 📦 Composer Cache
-      uses: actions/cache@v3
-      with:
-        path: ~/.composer/cache
-        key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
-        restore-keys: composer-${{ runner.os }}-
-
-    - name: 🔍 Repository Struktur prüfen
-      id: init
+    - name: 🗄️ Datenbank-Backup vor Update
+      # nutzt Secrets für SSH und DB-Passwort
       run: |
-        echo "📁 Repository Inhalt:"
-        ls -la
-        
-        project_initialized="false"
-        
-        # Prüfe ob Craft CMS vorhanden ist
-        if [ "${{ inputs.force_init }}" = "true" ] || [ ! -f "composer.json" ]; then
-          echo "🚀 Initialisiere neues Craft CMS Projekt..."
-          
-          # Craft CMS Projekt erstellen
-          composer create-project craftcms/craft . --no-interaction --no-dev --prefer-dist
-          
-          # Basic .env.example erstellen
-          if [ ! -f ".env.example" ]; then
-            cat > .env.example << 'ENV_EOF'
+        echo "→ erstelle Backup $DB_BACKUP_FILE"
+        ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+          "mysqldump -u${{ secrets.DB_USER }} -p${{ secrets.DB_PASS }} ${{ secrets.DB_NAME }} > ~/backups/$DB_BACKUP_FILE"
+        echo "Backup abgeschlossen"
 
-
-
-          project_initialized="true"
-          echo "✅ Craft CMS Projekt initialisiert"
+    - name: 📦 Composer install / update-dry-run
+      id: check
+      run: |
+        composer install --no-dev --no-interaction --prefer-dist
+        composer update --dry-run --no-dev --no-interaction --no-plugins >update_plan.txt || true
+        if grep -q 'craftcms/cms' update_plan.txt; then
+          echo "updates_available=true" >>"$GITHUB_OUTPUT"
         else
-          echo "✅ Craft CMS Projekt bereits vorhanden"
-        fi
-        
-        echo "project_initialized=${project_initialized}" >> $GITHUB_OUTPUT
-
-    - name: 📦 Composer Dependencies installieren
-      run: |
-        echo "📦 Installiere Composer Dependencies..."
-        composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
-        echo "✅ Dependencies installiert"
-
-    - name: 🔍 Aktuelle Versionen ermitteln
-      id: current
-      run: |
-        echo "📊 Ermittle aktuelle Craft CMS Versionen..."
-        
-        current_craft=$(grep -o '"craftcms/cms": "[^"]*"' composer.json | cut -d'"' -f4 || echo "nicht gefunden")
-        echo "current_craft=${current_craft}" >> $GITHUB_OUTPUT
-        echo "🎯 Aktuelle Craft Version Constraint: ${current_craft}"
-        
-        if [ -f "composer.lock" ]; then
-          current_installed=$(jq -r '.packages[] | select(.name=="craftcms/cms") | .version' composer.lock 2>/dev/null || echo "nicht gefunden")
-          echo "current_installed=${current_installed}" >> $GITHUB_OUTPUT
-          echo "📦 Aktuell installiert: ${current_installed}"
+          echo "updates_available=false" >>"$GITHUB_OUTPUT"
         fi
 
-    - name: 🔄 Update Check
-      id: updates
+    - name: 📦 Composer update (real)
+      if: steps.check.outputs.updates_available == 'true'
+      run: composer update --no-dev --no-interaction --prefer-dist
+
+    - name: 🧪 HTTP Funktionstest (Status 200 auf /)
+      if: steps.check.outputs.updates_available == 'true'
       run: |
-        echo "🔍 Prüfe verfügbare Updates..."
-        
-        # Composer Outdated Check
-        composer outdated --format=json > outdated.json 2>/dev/null || echo "{}" > outdated.json
-        
-        # Composer Update --dry-run
-        composer update --dry-run --no-install --no-scripts --no-plugins > update_check.txt 2>&1 || true
-        
-        updates_available="false"
-        update_details=""
-        
-        # Check für Craft CMS Updates
-        if grep -q "craftcms/cms" update_check.txt || [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-          updates_available="true"
-          
-          if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-            update_details="🚀 Neue Craft CMS Installation erstellt"
-          else
-            echo "✅ Craft CMS Updates verfügbar!"
-            update_details=$(grep -E "(craftcms/|craft-)" update_check.txt | head -10 || echo "Craft CMS Updates verfügbar")
-          fi
-          
-          # Sammle alle Craft-bezogenen Updates
-          craft_packages=$(grep -E "(craftcms/|craft-)" update_check.txt || echo "")
-          
-          # Multi-line Output
-          {
-            echo "update_details<<EOF"
-            echo "${update_details}"
-            echo ""
-            if [ -n "${craft_packages}" ]; then
-              echo "Craft Packages:"
-              echo "${craft_packages}"
-            fi
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-        else
-          echo "ℹ️ Keine Updates verfügbar"
+        status=$(curl -s -o /dev/null -w '%{http_code}' https://${{ secrets.SITE_HOST }}/)
+        if [ "$status" != "200" ]; then
+          echo "::error ::Deployment check failed – expected 200, got $status"
+          exit 1
         fi
-        
-        echo "updates_available=${updates_available}" >> $GITHUB_OUTPUT
-        
-        # Debug Info
-        echo "📋 Update Check Results:"
-        cat update_check.txt
+        echo "Test erfolgreich (200)"
 
-    - name: 📦 Updates durchführen
-      if: steps.updates.outputs.updates_available == 'true' && steps.init.outputs.project_initialized == 'false'
-      run: |
-        echo "🔄 Führe Composer Updates durch..."
-        
-        # Backup composer.lock
-        cp composer.lock composer.lock.backup
-        
-        # Update durchführen
-        composer update --no-interaction --prefer-dist --optimize-autoloader --no-dev
-        
-        echo "✅ Composer Update abgeschlossen"
-
-    - name: 📋 Update Summary erstellen
-      if: steps.updates.outputs.updates_available == 'true'
-      id: summary
-      run: |
-        echo "📊 Erstelle Update Summary..."
-        
-        git add .
-        
-        # Action Type bestimmen
-        if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-          action_type="🚀 Neue Craft CMS Installation"
-        else
-          action_type="🔄 Craft CMS Update"
-        fi
-        
-        # Update Summary
-        cat > UPDATE_SUMMARY.md << SUMMARY_EOF
-        # ${action_type}
-        
-        **Update Type:** ${{ inputs.update_type || 'scheduled' }}
-        **Timestamp:** $(date '+%Y-%m-%d %H:%M:%S')
-        **Repository:** ${{ github.repository }}
-        
-        ## 📦 Changes
-        
-        ${{ steps.updates.outputs.update_details }}
-        
-        ## 🔧 Modified Files
-        
-        \`\`\`
-        $(git diff --cached --name-only | head -20)
-        \`\`\`
-        
-        ## 🚀 Deployment Information
-        
-        ✅ **Automatisiert mit Envoyer:**
-        - Backups werden automatisch vor Deployment erstellt
-        - Zero-Downtime Deployment 
-        - Automatischer Rollback bei Fehlern
-        
-        ## 🧪 Testing Checklist
-        
-        - [ ] Admin Panel Login (\`/admin\`)
-        - [ ] Content Creation/Editing  
-        - [ ] Frontend Display
-        - [ ] Plugin Functionality
-        - [ ] Database Migrations OK
-        - [ ] Environment Variables OK
-        
-        ## 📋 Next Steps
-        
-        1. **Review this PR** - Check changes
-        2. **Merge when ready** - Envoyer will auto-deploy
-        3. **Monitor deployment** - Check Envoyer dashboard
-        4. **Test live site** - Verify everything works
-        
-        ---
-        *Auto-generated by GitHub Actions*  
-        *Deployment handled by Envoyer*  
-        *Backups handled by automated system*
-        SUMMARY_EOF
-
-    - name: 🔄 Pull Request erstellen
-      if: steps.updates.outputs.updates_available == 'true'
-      id: pr
+    - name: 📝 Commit & Pull-Request
+      if: steps.check.outputs.updates_available == 'true'
       uses: peter-evans/create-pull-request@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        commit-message: |
-          ${{ steps.init.outputs.project_initialized == 'true' && '🚀 Initialize Craft CMS project' || '🔄 Auto-update Craft CMS dependencies' }}
-          
-          - Type: ${{ inputs.update_type || 'scheduled' }}
-          - Timestamp: $(date)
-          - Ready for Envoyer deployment
-        title: |
-          ${{ steps.init.outputs.project_initialized == 'true' && '🚀 [INIT]' || '🔄 [UPDATE]' }} Craft CMS ${{ inputs.update_type || 'Scheduled Update' }} - $(date +%Y-%m-%d)
-        body-path: UPDATE_SUMMARY.md
+        commit-message: "🔄 Auto-update Craft CMS dependencies"
+        title: "🔄 Craft CMS ${{ github.event.inputs.update_type || 'Scheduled' }} Update – $(date +%Y-%m-%d)"
+        body: |
+          Automatisches Update via GitHub Actions.  
+          **Status:** grüner Test (HTTP 200) nach Composer-Update.  
+          **Datenbank-Backup:** $DB_BACKUP_FILE
         branch: craft-update-${{ github.run_id }}
+        labels: auto-update, craft-cms, envoyer-ready
         delete-branch: true
-        labels: |
-          ${{ steps.init.outputs.project_initialized == 'true' && 'initialization' || 'auto-update' }}
-          craft-cms
-          envoyer-ready
         reviewers: ${{ github.actor }}
-        assignees: ${{ github.actor }}
 
-    - name: 📊 Workflow Results
-      run: |
-        if [ "${{ steps.updates.outputs.updates_available }}" = "true" ]; then
-          echo "✅ Updates gefunden und PR erstellt!"
-          echo "🔗 PR: ${{ steps.pr.outputs.pull-request-number }}"
-          echo "🌿 Branch: craft-update-${{ github.run_id }}"
-          
-          if [ "${{ steps.init.outputs.project_initialized }}" = "true" ]; then
-            echo "🚀 Neues Craft CMS Projekt initialisiert"
-          fi
-          
-          echo ""
-          echo "📋 Next Steps:"
-          echo "1. Review PR in GitHub"
-          echo "2. Merge when ready"  
-          echo "3. Envoyer handles deployment"
-          echo "4. Automated backups run before deploy"
-        else
-          echo "ℹ️ Keine Updates verfügbar - alles aktuell!"
-        fi
-
-  notification:
-    name: 📧 Update Notification
-    runs-on: ubuntu-latest
+  notify:
     needs: craft-update
-    if: always() && needs.craft-update.outputs.updates_available == 'true'
-    
+    if: needs.craft-update.result == 'failure'
+    runs-on: ubuntu-latest
     steps:
-    - name: 📧 E-Mail Benachrichtigung
+    - name: 📧 Fehlalarm senden
       uses: dawidd6/action-send-mail@v3
-      if: vars.MAIL_HOST != ''
       with:
         server_address: ${{ vars.MAIL_HOST }}
         server_port: ${{ vars.MAIL_PORT || '587' }}
         username: ${{ secrets.MAIL_USERNAME }}
         password: ${{ secrets.MAIL_PASSWORD }}
-        subject: 'Craft CMS ${{ needs.craft-update.outputs.project_initialized == ''true'' && ''Project Initialized'' || ''Updates Available'' }} - ${{ github.repository }}'
+        subject: 'Craft CMS Auto-Update fehlgeschlagen – ${{ github.repository }}'
         to: tim.steegmueller@farbcode.net
         from: ${{ vars.MAIL_FROM || secrets.MAIL_USERNAME }}
         body: |
-          Craft CMS Update Check Completed
-          
-          **Status:** ${{ needs.craft-update.outputs.project_initialized == 'true' && '🚀 New project initialized' || '🔄 Updates available' }}
-          **Type:** ${{ github.event.inputs.update_type || 'scheduled' }}
-          **Repository:** ${{ github.repository }}
-          **PR Number:** ${{ needs.craft-update.outputs.pr_number }}
-          
-          **Next Steps:**
-          1. Review PR: https://github.com/${{ github.repository }}/pull/${{ needs.craft-update.outputs.pr_number }}
-          2. Merge when ready
-          3. Envoyer will handle deployment
-          
-          **Deployment Process:**
-          ✅ Automated backups before deployment  
-          ✅ Zero-downtime deployment via Envoyer  
-          ✅ Automatic rollback on failure  
-          
-          ---
-          Generated by GitHub Actions
+          Das automatische Update hat einen Fehler gemeldet.  
+          Prüfe das Log im GitHub-Action-Run: ${{ github.run_url }}
