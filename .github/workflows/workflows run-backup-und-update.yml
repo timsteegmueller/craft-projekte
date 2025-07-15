@@ -34,7 +34,7 @@ jobs:
           php-version: 8.2
           extensions: mbstring, pdo, pdo_mysql, intl, curl, json, dom, fileinfo, gd, openssl, tokenizer, zip, xml, ctype
 
-      - name: 📦 Composer installieren
+      - name: 📦 Composer Abhängigkeiten installieren
         run: composer install --no-interaction --prefer-dist
 
       - name: 💾 Datenbank-Backup durchführen
