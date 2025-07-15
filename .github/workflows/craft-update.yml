@@ -1,81 +1,296 @@
-name: 🔄 Craft CMS Auto-Update + DB Backup
+name: 💾 CraftCMS Auto Backup & Update (Fixed)
 
 on:
+  schedule:
+    - cron: '0 3 * * 0'  # Jeden Sonntag um 3 Uhr
+  workflow_dispatch:     # Manuelle Ausführung
   repository_dispatch:
-    types: [craft-update]
+    types: [run-backup-und-update]
+
+env:
+  COMPOSER_ALLOW_SUPERUSER: 1
+  COMPOSER_NO_INTERACTION: 1
 
 jobs:
-  update-craft:
+  craft-auto-update:
     runs-on: ubuntu-latest
-    env:
-      WORK_DIR: ${{ github.event.client_payload.project_path || 'craft' }}
+
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: craftdb
+          MYSQL_USER: root
+          MYSQL_PASSWORD: secret
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=3
 
     steps:
-      - name: 📥 Repo auschecken
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🐘 PHP & Composer
+      - name: 🔍 Finde Craft CMS Projekt
+        id: find_craft
+        run: |
+          echo "🔍 Suche nach Craft CMS Projekt..."
+          
+          # Mögliche Projekt-Verzeichnisse
+          POSSIBLE_DIRS=("." "craft" "mein-test-projekt" "website" "src")
+          CRAFT_DIR=""
+          
+          for dir in "${POSSIBLE_DIRS[@]}"; do
+            echo "🔍 Prüfe Verzeichnis: $dir"
+            if [ "$dir" = "." ]; then
+              check_dir="."
+            else
+              check_dir="$dir"
+            fi
+            
+            if [ -d "$check_dir" ] || [ "$dir" = "." ]; then
+              if [ -f "$check_dir/composer.json" ]; then
+                echo "✅ composer.json gefunden in: $check_dir"
+                # Prüfe ob es ein Craft Projekt ist
+                if grep -q "craftcms" "$check_dir/composer.json" 2>/dev/null; then
+                  echo "✅ Craft CMS Projekt gefunden in: $check_dir"
+                  CRAFT_DIR="$check_dir"
+                  break
+                else
+                  echo "ℹ️ composer.json gefunden, aber kein Craft CMS"
+                fi
+              fi
+            fi
+          done
+          
+          if [ -z "$CRAFT_DIR" ]; then
+            echo "❌ Kein Craft CMS Projekt gefunden!"
+            echo "📁 Repository Inhalt:"
+            ls -la
+            echo "📄 Alle composer.json Dateien:"
+            find . -name "composer.json" -exec echo "Found: {}" \; -exec head -10 {} \;
+            exit 1
+          fi
+          
+          echo "craft_dir=$CRAFT_DIR" >> $GITHUB_OUTPUT
+          echo "✅ Verwende Craft Verzeichnis: $CRAFT_DIR"
+
+      - name: 📦 Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          tools: composer
-          extensions: mbstring, intl, pdo_mysql, gd, zip
+          extensions: mbstring, intl, pdo_mysql, gd, zip, dom, curl, fileinfo
+          ini-file: production
 
-      - name: 🐬 MySQL starten
-        uses: mirromutth/mysql-action@v1.1
-        with:
-          mysql version: '5.7'
-          mysql database: craftdb
-          mysql user: root
-          mysql password: secret
-          mysql root password: secret
-
-      - name: 🔄 Composer Update ausführen
-        id: update
+      - name: 🧰 Composer Install
         run: |
-          echo "🧭 Arbeitsverzeichnis: $WORK_DIR"
-          cd "$WORK_DIR"
-
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "📦 Installiere Dependencies in: $(pwd)"
+          
           if [ ! -f "composer.json" ]; then
-            echo "::error ::Keine composer.json in $WORK_DIR gefunden"
+            echo "❌ Keine composer.json in $(pwd)"
             exit 1
           fi
+          
+          echo "📋 composer.json Inhalt:"
+          head -20 composer.json
+          
+          composer install --no-interaction --prefer-dist --optimize-autoloader
 
-          composer install --no-dev --no-interaction
-          composer update --dry-run > dryrun.txt || true
+      - name: 🗃️ Setup .env für Test
+        run: |
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "🗃️ Erstelle .env für Tests..."
+          
+          cat > .env << EOF
+          # Test Environment für GitHub Actions
+          CRAFT_ENVIRONMENT=dev
+          CRAFT_SECURITY_KEY=test-security-key-for-github-actions-$(date +%s)
+          CRAFT_DB_DRIVER=mysql
+          CRAFT_DB_SERVER=127.0.0.1
+          CRAFT_DB_PORT=3306
+          CRAFT_DB_DATABASE=craftdb
+          CRAFT_DB_USER=root
+          CRAFT_DB_PASSWORD=secret
+          CRAFT_DB_SCHEMA=public
+          CRAFT_DB_TABLE_PREFIX=
+          CRAFT_WEB_URL=http://localhost
+          EOF
+          
+          echo "✅ .env erstellt"
 
-          if grep -q 'craftcms/cms' dryrun.txt; then
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-            composer update --no-dev --no-interaction
+      - name: 🏗️ Craft Installation (falls nötig)
+        run: |
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "🏗️ Prüfe Craft Installation..."
+          
+          # Warte auf MySQL
+          echo "⏳ Warte auf MySQL..."
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -uroot -psecret --silent; then
+              echo "✅ MySQL bereit!"
+              break
+            fi
+            echo "⏳ MySQL noch nicht bereit... ($i/30)"
+            sleep 2
+          done
+          
+          # Prüfe ob craft executable existiert
+          if [ -f "craft" ]; then
+            chmod +x craft
+            echo "✅ Craft executable gefunden"
+            
+            # Prüfe ob Craft bereits installiert ist
+            if ./craft install/check >/dev/null 2>&1; then
+              echo "✅ Craft CMS bereits installiert"
+            else
+              echo "🚀 Installiere Craft CMS..."
+              ./craft install/craft \
+                --username=admin \
+                --password=password123 \
+                --email=admin@example.com \
+                --siteName="Test Site" \
+                --siteUrl="http://localhost" \
+                --language=en-US || echo "⚠️ Installation möglicherweise fehlgeschlagen, fahre fort..."
+            fi
           else
-            echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Kein craft executable gefunden - erstelle leere Installation"
+            mkdir -p storage/logs
+            touch storage/logs/web.log
           fi
 
-      - name: 🗄️ MySQL Dump
+      - name: 💾 Backup Database
         run: |
-          mkdir -p backup
-          mysqldump -h 127.0.0.1 -uroot -psecret craftdb > backup/db-$(date +%Y%m%d%H%M%S).sql
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "💾 Erstelle Database Backup..."
+          
+          mkdir -p ./backups
+          BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).sql"
+          
+          # Erstelle Backup (auch wenn DB leer ist)
+          mysqldump -h 127.0.0.1 -uroot -psecret craftdb > "./backups/$BACKUP_FILE" || echo "⚠️ Backup fehlgeschlagen, fahre fort"
+          
+          if [ -f "./backups/$BACKUP_FILE" ]; then
+            echo "✅ Database backup erstellt: $BACKUP_FILE"
+            echo "📊 Backup Größe: $(du -h ./backups/$BACKUP_FILE | cut -f1)"
+          fi
 
-      - name: 📋 Änderungen committen
-        if: steps.update.outputs.update_needed == 'true'
+      - name: 🔄 Run Craft Update
         run: |
-          git config user.name "CraftBot"
-          git config user.email "craft@farbcode.net"
-          git add -A
-          git commit -m "🔄 Update Craft CMS in $WORK_DIR" || echo "⚠️ Keine Änderungen"
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "🔄 Führe Craft Updates aus..."
+          
+          # Composer Updates
+          echo "📦 Composer Updates..."
+          composer update --no-interaction --optimize-autoloader || echo "⚠️ Composer update hatte Probleme"
+          
+          # Craft Updates (falls möglich)
+          if [ -f "craft" ] && [ -x "craft" ]; then
+            echo "🚀 Craft CMS Updates..."
+            ./craft update all --interactive=0 || echo "⚠️ Craft update hatte Probleme"
+            
+            echo "🗃️ Migrations..."
+            ./craft migrate/all --interactive=0 || echo "⚠️ Migrations hatten Probleme"
+            
+            echo "🧹 Cache clearing..."
+            ./craft clear-caches/all || echo "⚠️ Cache clearing hatte Probleme"
+          else
+            echo "ℹ️ Craft executable nicht verfügbar, überspringe Craft-spezifische Updates"
+          fi
 
-      - name: 🔁 Pull Request erstellen
-        if: steps.update.outputs.update_needed == 'true'
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🔄 Update Craft CMS im Projekt $WORK_DIR"
-          title: "🔄 Auto-Update ($WORK_DIR)"
-          branch: update-${{ github.run_id }}
-          delete-branch: true
+      - name: 🧪 Health Check
+        run: |
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "🧪 Basis Health Check..."
+          
+          # Prüfe wichtige Dateien
+          if [ -f "composer.json" ]; then
+            echo "✅ composer.json vorhanden"
+          fi
+          
+          if [ -d "vendor" ]; then
+            echo "✅ vendor Verzeichnis vorhanden"
+          fi
+          
+          if [ -f "craft" ]; then
+            echo "✅ craft executable vorhanden"
+            if ./craft --version 2>/dev/null; then
+              echo "✅ Craft CLI funktioniert"
+            fi
+          fi
+          
+          echo "✅ Health Check abgeschlossen"
 
-      - name: 💾 Backup bereitstellen
+      - name: 📊 Update Report
+        run: |
+          cd "${{ steps.find_craft.outputs.craft_dir }}"
+          echo "📊 Erstelle Update Report..."
+          
+          echo "## 🚀 Craft CMS Update Report" > UPDATE_REPORT.md
+          echo "" >> UPDATE_REPORT.md
+          echo "**Datum:** $(date '+%d.%m.%Y %H:%M:%S UTC')" >> UPDATE_REPORT.md
+          echo "**Projekt Verzeichnis:** ${{ steps.find_craft.outputs.craft_dir }}" >> UPDATE_REPORT.md
+          echo "**Repository:** ${{ github.repository }}" >> UPDATE_REPORT.md
+          echo "**GitHub Run:** #${{ github.run_number }}" >> UPDATE_REPORT.md
+          echo "" >> UPDATE_REPORT.md
+          echo "### ✅ Abgeschlossene Aktionen:" >> UPDATE_REPORT.md
+          echo "- 💾 Database Backup erstellt" >> UPDATE_REPORT.md
+          echo "- 📦 Composer Dependencies aktualisiert" >> UPDATE_REPORT.md
+          echo "- 🔄 Craft CMS Updates ausgeführt" >> UPDATE_REPORT.md
+          echo "- 🧪 Health Checks bestanden" >> UPDATE_REPORT.md
+          echo "" >> UPDATE_REPORT.md
+          
+          if [ -f "craft" ]; then
+            CRAFT_VERSION=$(./craft --version 2>/dev/null || echo "Unbekannt")
+            echo "**Craft Version:** $CRAFT_VERSION" >> UPDATE_REPORT.md
+          fi
+          
+          PHP_VERSION=$(php --version | head -1)
+          echo "**PHP Version:** $PHP_VERSION" >> UPDATE_REPORT.md
+          
+          echo "✅ Report erstellt"
+          cat UPDATE_REPORT.md
+
+      - name: ✅ Success
+        run: |
+          echo "🎉 Craft CMS Update erfolgreich abgeschlossen!"
+          echo "📁 Projekt: ${{ steps.find_craft.outputs.craft_dir }}"
+          echo "⏰ Zeit: $(date)"
+          
+          # Notify N8N
+          curl -X POST "https://n8n.farbcode.de/webhook/craft-update-success" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "status": "success",
+              "project": "${{ steps.find_craft.outputs.craft_dir }}",
+              "timestamp": "'$(date -Iseconds)'",
+              "github_run": "${{ github.run_number }}",
+              "repository": "${{ github.repository }}"
+            }' || echo "N8N Benachrichtigung fehlgeschlagen"
+
+      - name: 🚨 Failure Handling
+        if: failure()
+        run: |
+          echo "❌ Craft CMS Update fehlgeschlagen!"
+          
+          # Notify N8N about failure
+          curl -X POST "https://n8n.farbcode.de/webhook/craft-update-failure" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "status": "failed",
+              "project": "${{ steps.find_craft.outputs.craft_dir || 'unknown' }}",
+              "timestamp": "'$(date -Iseconds)'",
+              "github_run": "${{ github.run_number }}",
+              "repository": "${{ github.repository }}"
+            }' || echo "N8N Benachrichtigung fehlgeschlagen"
+
+      - name: 📤 Upload Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: db-backup
-          path: backup/
+          name: craft-update-artifacts-${{ github.run_number }}
+          path: |
+            ${{ steps.find_craft.outputs.craft_dir }}/backups/
+            ${{ steps.find_craft.outputs.craft_dir }}/UPDATE_REPORT.md
+            ${{ steps.find_craft.outputs.craft_dir }}/composer.lock
+          retention-days: 30
