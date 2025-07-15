@@ -1,6 +1,9 @@
 name: 💾 CraftCMS Auto Backup & Update
 
 on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
   repository_dispatch:
     types: [run-backup-und-update]
 
@@ -14,44 +17,37 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: craft
-          MYSQL_USER: root
-          MYSQL_PASSWORD: root
+          MYSQL_USER: craft
+          MYSQL_PASSWORD: craft
         ports:
           - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping --silent"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
+        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=3
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: 📥 Checkout
         uses: actions/checkout@v3
 
-      - name: 🐘 Set up PHP 8.2
+      - name: 📦 PHP Setup
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          extensions: mbstring, pdo_mysql, intl, dom, curl, gd, zip, fileinfo
-          ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
+          php-version: 8.2
+          extensions: mbstring, pdo, mysql, dom, curl, intl, gd, zip, fileinfo
+          ini-values: memory_limit=512M
           coverage: none
 
-      - name: 🔍 
-        run: php -v
-
-      - name: 📦 Install Composer Dependencies
+      - name: 🧰 Composer Install
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
         working-directory: ./mein-test-projekt
 
-      - name: 💾 Backup MySQL-Datenbank
+      - name: 💾 Backup DB
         run: |
           mkdir -p ./backups
-          mysqldump -h 127.0.0.1 -u root -proot craft > ./backups/backup.sql
+          mysqldump -h 127.0.0.1 -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} ${{ secrets.DB_NAME }} > ./backups/backup.sql
         working-directory: ./mein-test-projekt
 
-      - name: 🔁 Craft Update ausführen
+      - name: 🔁 Run Craft Update
         run: php craft update all
         working-directory: ./mein-test-projekt
 
-      - name: ✅ Fertig
-        run: echo "Backup & Update abgeschlossen."
+      - name: ✅ Done
+        run: echo "🎉 Update completed successfully!"
