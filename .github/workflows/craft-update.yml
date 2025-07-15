@@ -1,59 +1,96 @@
-name: 🔄 Modular Craft CMS Update
+name: 🔄 Craft CMS Auto-Update + Backup
 
 on:
   repository_dispatch:
     types: [craft-update]
 
-env:
-  DB_NAME: ${{ github.event.client_payload.db_name }}
-  SSH_USER: ${{ github.event.client_payload.ssh_user }}
-  SSH_HOST: ${{ github.event.client_payload.ssh_host }}
-  SITE_HOST: ${{ github.event.client_payload.site_host }}
-
 jobs:
-  update:
+  update-craft:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    defaults:
+      run:
+        shell: bash
 
-      - uses: shivammathur/setup-php@v2
+    env:
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+
+    steps:
+      - name: 📥 Repo auschecken
+        uses: actions/checkout@v4
+
+      - name: 🐘 PHP + Composer installieren
+        uses: shivammathur/setup-php@v2
         with:
           php-version: '8.1'
           extensions: mbstring, intl, pdo_mysql, gd, zip
-          tools: composer
+          tools: composer:v2
 
-
-      - name: 📦 Composer Update Check
-        id: update
+      - name: 🗄️ Lokale Datenbank-Backup
         run: |
-          composer install --no-dev --no-interaction
-          composer update --dry-run >check.txt || true
-          if grep -q 'craftcms/cms' check.txt; then
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-          else
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-          fi
+          mkdir -p backup
+          mysqldump -h 127.0.0.1 -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" > backup/db-$(date +%Y%m%d%H%M%S).sql
 
-      - name: 🔄 Composer Update durchführen
-        if: steps.update.outputs.update_needed == 'true'
-        run: composer update --no-dev --no-interaction
-
-      - name: 🌐 HTTP-Test
-        if: steps.update.outputs.update_needed == 'true'
+      - name: 🔍 Alle composer.json finden
+        id: find
         run: |
-          status=$(curl -s -o /dev/null -w '%{http_code}' https://$SITE_HOST/)
-          if [ "$status" != "200" ]; then
-            echo "::error ::HTTP-Test fehlgeschlagen ($status statt 200)"
-            exit 1
-          fi
+          find . -name composer.json > composer_files.txt
+          echo "📁 Gefundene composer.json-Dateien:"
+          cat composer_files.txt
 
-      - name: 📋 Git Commit vorbereiten
-        if: steps.update.outputs.update_needed == 'true'
+      - name: 🔄 Composer Updates prüfen & ausführen
+        id: updates
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          updated=0
+
+          while IFS= read -r composer_file; do
+            dir=$(dirname "$composer_file")
+            echo "📦 Verarbeite: $dir"
+
+            cd "$dir"
+            composer install --no-interaction --no-dev || true
+
+            # Check for updates
+            composer update --dry-run >dryrun.txt || true
+
+            if grep -q 'craftcms/cms' dryrun.txt; then
+              echo "✅ Update erkannt in $dir"
+              composer update --no-interaction --no-dev || true
+              updated=1
+            else
+              echo "ℹ️ Kein Update für Craft CMS in $dir"
+            fi
+
+            cd -
+          done < composer_files.txt
+
+          echo "updated=$updated" >> "$GITHUB_OUTPUT"
+
+      - name: 📋 Änderungen committen
+        if: steps.updates.outputs.updated == '1'
+        run: |
+          git config user.name "Craft Update Bot"
+          git config user.email "craft-bot@github.actions"
           git add -A
           git commit -m "🔄 Automatisches Craft CMS Update" || echo "⚠️ Nichts zu committen"
 
+      - name: 🔁 PR erstellen
+        if: steps.updates.outputs.updated == '1'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "🔄 Automatisches Update für Craft CMS"
+          title: "🔄 Craft CMS Auto-Update"
+          body: |
+            Automatischer Composer Update für Craft CMS + DB-Backup
 
-     
+            DB-Backup liegt als Artifact bei.
+          branch: update-${{ github.run_id }}
+          delete-branch: true
+
+      - name: 🗃️ Backup als Artifact speichern
+        uses: actions/upload-artifact@v3
+        with:
+          name: craft-db-backup
+          path: backup/
