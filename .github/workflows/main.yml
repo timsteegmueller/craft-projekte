@@ -53,6 +53,25 @@ jobs:
             echo "DB_SCHEMA=public" >> .env
                 working-directory: ./mein-test-projekt
 
+
+
+                
+      - name: 📄 Schreibe .env-Datei für Craft
+          working-directory:b -./mein-test-projekt
+        run: |
+            cat <<EOF > .env
+            APP_ID=craft-update
+            CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}
+            DB_DRIVER=mysql
+            DB_SERVER=127.0.0.1
+            DB_PORT=3306
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_DATABASE=${{ secrets.DB_NAME }}
+            DB_TABLE_PREFIX=
+            DB_SCHEMA=public
+            EOF
+
       - name: 💾 Backup DB
         run: |
           mkdir -p ./backups
