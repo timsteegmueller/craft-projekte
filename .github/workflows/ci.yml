@@ -1,0 +1,53 @@
+name: 💾 Craft CMS Backup
+
+on:
+  repository_dispatch:
+    types: [run-backup]
+
+env:
+  WORK_DIR: ${{ github.event.client_payload.project_path || '.' }}
+  MYSQL_HOST: 127.0.0.1
+  MYSQL_PORT: 3306
+
+jobs:
+  mysql-backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Repository klonen
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Arbeitsverzeichnis prüfen
+        run: |
+          echo "🧭 Arbeitsverzeichnis: $WORK_DIR"
+          if [ ! -d "$WORK_DIR" ]; then
+            echo "❌ Fehler: Verzeichnis '$WORK_DIR' existiert nicht."
+            exit 1
+          fi
+
+      - name: 🐬 MySQL 5.7 starten
+        uses: mirromutth/mysql-action@v1.1
+        with:
+          mysql version: '5.7'
+          mysql root password: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          mysql database: ${{ secrets.MYSQL_DATABASE }}
+          mysql user: ${{ secrets.MYSQL_USER }}
+          mysql password: ${{ secrets.MYSQL_PASSWORD }}
+
+      - name: 🧠 Warten bis MySQL läuft
+        run: sleep 15
+
+      - name: 💾 Dump erstellen
+        run: |
+          echo "📤 Dumping Datenbank '${{ secrets.MYSQL_DATABASE }}'..."
+          mysqldump -h $MYSQL_HOST \
+            -P $MYSQL_PORT \
+            -u ${{ secrets.MYSQL_USER }} \
+            -p${{ secrets.MYSQL_PASSWORD }} \
+            ${{ secrets.MYSQL_DATABASE }} > backup.sql
+
+      - name: ⬆️ Dump als Artifact hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: craft-backup-${{ github.repository }}
+          path: backup.sql
