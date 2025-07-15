@@ -1,0 +1,52 @@
+name: Check for Updates
+
+on: [workflow_dispatch]  # Das wird von N8N gestartet
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hole den Code
+        uses: actions/checkout@v3
+
+      - name: Richte PHP ein
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'  # Passe das an deine Version an
+
+      - name: Installiere Abhängigkeiten
+        run: composer install --no-interaction
+
+      - name: Führe Update aus
+        run: php craft update all --interactive=0  # Hier kommen die Updates – oder composer update, je nach Bedarf
+
+      - name: Schau nach Änderungen
+        id: changes
+        run: |
+          # Prüfe, ob composer.lock geändert ist – wenn nicht, machen wir nichts
+          git diff --quiet composer.lock
+          if [ $? -eq 0 ]; then
+            echo "changes_detected=false" >> $GITHUB_OUTPUT
+          else
+            echo "changes_detected=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Erstelle PR, wenn es Änderungen gibt
+        if: steps.changes.outputs.changes_detected == 'true'
+        env:
+          GITHUB_TOKEN: [DEIN_GITHUB_TOKEN]  
+        run: |
+          # Erstelle Branch und committe
+          git checkout -b chore/auto-update-$(date +%Y-%m-%d)
+          git add composer.lock
+          git commit -m "Neue Updates – automatisiert"
+          git push origin chore/auto-update-$(date +%Y-%m-%d)
+          # Erstelle PR
+          gh pr create --title "Automatisches Update" --body "Hier sind die Änderungen, bitte prüfen" --base main
+
+      - name: Schicke Benachrichtigung
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: "{\"text\": \"PR erstellt oder keine Updates gefunden! Schau ins Repo.\"}"
+        env:
+          SLACK_WEBHOOK_URL: [DEIN_SLACK_WEBHOOK]  # Für Alerts – erweitere mit E-Mail, wenn du willst
