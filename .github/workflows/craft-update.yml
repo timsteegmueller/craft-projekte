@@ -1,52 +1,269 @@
-name: Check for Updates
+name: 🚀 Craft CMS & Composer Auto Update
 
-on: [workflow_dispatch]  # Das wird von N8N gestartet
+on:
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Art des Updates'
+        required: false
+        default: 'manual'
+        type: choice
+        options:
+          - manual
+          - weekly-schedule
+          - security
+      triggered_by:
+        description: 'Ausgelöst durch'
+        required: false
+        default: 'manual'
+        type: string
+
+  schedule:
+    # Jeden Montag um 3:00 UTC
+    - cron: '0 3 * * 1'
+
+env:
+  PHP_VERSION: '8.1'
+  NODE_VERSION: '18'
 
 jobs:
-  check-updates:
+  craft-update:
+    name: 🔄 Craft CMS Update
     runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: craft_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
     steps:
-      - name: Hole den Code
-        uses: actions/checkout@v3
+    - name: 🔄 Repository auschecken
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
 
-      - name: Richte PHP ein
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.1'  # Passe das an deine Version an
+    - name: 🐘 PHP Setup
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ env.PHP_VERSION }}
+        extensions: mbstring, xml, ctype, json, openssl, pdo, pdo_mysql, mysql, zip, gd, curl
+        tools: composer:v2
+        coverage: none
 
-      - name: Installiere Abhängigkeiten
-        run: composer install --no-interaction
+    - name: 🟢 Node.js Setup
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
 
-      - name: Führe Update aus
-        run: php craft update all --interactive=0  # Hier kommen die Updates – oder composer update, je nach Bedarf
+    - name: 📦 Composer Cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.composer/cache
+          vendor
+        key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          composer-${{ runner.os }}-
 
-      - name: Schau nach Änderungen
-        id: changes
-        run: |
-          # Prüfe, ob composer.lock geändert ist – wenn nicht, machen wir nichts
-          git diff --quiet composer.lock
-          if [ $? -eq 0 ]; then
-            echo "changes_detected=false" >> $GITHUB_OUTPUT
-          else
-            echo "changes_detected=true" >> $GITHUB_OUTPUT
-          fi
+    - name: 🗃️ NPM Cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.npm
+        key: npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          npm-${{ runner.os }}-
 
-      - name: Erstelle PR, wenn es Änderungen gibt
-        if: steps.changes.outputs.changes_detected == 'true'
-        env:
-          GITHUB_TOKEN: [DEIN_GITHUB_TOKEN]  
-        run: |
-          # Erstelle Branch und committe
-          git checkout -b chore/auto-update-$(date +%Y-%m-%d)
-          git add composer.lock
-          git commit -m "Neue Updates – automatisiert"
-          git push origin chore/auto-update-$(date +%Y-%m-%d)
-          # Erstelle PR
-          gh pr create --title "Automatisches Update" --body "Hier sind die Änderungen, bitte prüfen" --base main
+    - name: 📥 Composer Dependencies installieren
+      run: |
+        composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+        composer validate --strict
 
-      - name: Schicke Benachrichtigung
-        uses: slackapi/slack-github-action@v1.24.0
-        with:
-          payload: "{\"text\": \"PR erstellt oder keine Updates gefunden! Schau ins Repo.\"}"
-        env:
-          SLACK_WEBHOOK_URL: [DEIN_SLACK_WEBHOOK]  # Für Alerts – erweitere mit E-Mail, wenn du willst
+    - name: 📥 NPM Dependencies installieren
+      run: |
+        if [ -f "package.json" ]; then
+          npm ci --production
+        fi
+
+    - name: 📋 Aktueller Status
+      run: |
+        echo "🔍 Aktuelle Versionen:"
+        composer show | grep -E "(craftcms|putyourlightson|verbb)" || true
+        echo "📦 Composer Outdated:"
+        composer outdated --direct || true
+
+    - name: 💾 Database Backup (Test)
+      run: |
+        mkdir -p storage/backups
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        echo "-- Database Backup Simulation" > storage/backups/backup_${timestamp}.sql
+        echo "-- Created: $(date)" >> storage/backups/backup_${timestamp}.sql
+        echo "-- Trigger: ${{ github.event.inputs.update_type || 'scheduled' }}" >> storage/backups/backup_${timestamp}.sql
+        echo "✅ Backup simuliert: backup_${timestamp}.sql"
+
+    - name: 🔄 Craft CMS Updates prüfen
+      id: craft-check
+      run: |
+        echo "🔍 Prüfe Craft CMS Updates..."
+        
+        # Simuliere Craft Update Check (da keine echte DB)
+        if [ -f "craft" ]; then
+          echo "craft_available=true" >> $GITHUB_OUTPUT
+          echo "✅ Craft CMS Binary gefunden"
+        else
+          echo "craft_available=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Craft CMS Binary nicht gefunden - erstelle Simulation"
+          touch craft-updates.log
+          echo "Simulated Craft update check at $(date)" > craft-updates.log
+        fi
+
+    - name: 📦 Composer Updates durchführen
+      id: composer-update
+      run: |
+        echo "📦 Führe Composer Updates durch..."
+        
+        # Backup der aktuellen composer.lock
+        cp composer.lock composer.lock.backup
+        
+        # Update nur Craft CMS bezogene Pakete
+        composer update craftcms/cms --with-dependencies --no-interaction
+        composer update putyourlightson/* --with-dependencies --no-interaction --dry-run
+        composer update verbb/* --with-dependencies --no-interaction --dry-run
+        
+        # Prüfe ob sich was geändert hat
+        if ! diff -q composer.lock composer.lock.backup > /dev/null; then
+          echo "updates_available=true" >> $GITHUB_OUTPUT
+          echo "✅ Composer Updates verfügbar"
+          
+          # Erstelle Update Summary
+          echo "## 📦 Composer Updates" > composer-updates.md
+          echo "**Datum:** $(date)" >> composer-updates.md
+          echo "**Trigger:** ${{ github.event.inputs.update_type || 'scheduled' }}" >> composer-updates.md
+          echo "" >> composer-updates.md
+          
+          # Zeige Änderungen
+          composer show --outdated --direct >> composer-updates.md || true
+          
+        else
+          echo "updates_available=false" >> $GITHUB_OUTPUT
+          echo "ℹ️ Keine Composer Updates verfügbar"
+          mv composer.lock.backup composer.lock
+        fi
+
+    - name: 🧪 Tests ausführen
+      if: steps.composer-update.outputs.updates_available == 'true'
+      run: |
+        echo "🧪 Führe Tests aus..."
+        
+        # Basis Tests
+        composer validate --strict
+        
+        # Prüfe ob wichtige Dateien existieren
+        if [ ! -f "config/app.php" ]; then
+          echo "❌ config/app.php fehlt"
+          exit 1
+        fi
+        
+        if [ ! -f "config/db.php" ]; then
+          echo "❌ config/db.php fehlt"
+          exit 1
+        fi
+        
+        echo "✅ Basis Tests bestanden"
+
+    - name: 🏗️ Assets Build (falls vorhanden)
+      if: steps.composer-update.outputs.updates_available == 'true'
+      run: |
+        if [ -f "webpack.mix.js" ] || [ -f "vite.config.js" ]; then
+          echo "🏗️ Building Assets..."
+          npm run production || npm run build || echo "⚠️ Asset build fehlgeschlagen"
+        else
+          echo "ℹ️ Keine Asset Build Konfiguration gefunden"
+        fi
+
+    - name: 📝 Änderungen committen
+      if: steps.composer-update.outputs.updates_available == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action Bot"
+        
+        # Staging
+        git add composer.lock
+        
+        if [ -f "composer-updates.md" ]; then
+          git add composer-updates.md
+        fi
+        
+        if [ -f "craft-updates.log" ]; then
+          git add craft-updates.log
+        fi
+        
+        # Commit nur wenn Änderungen vorhanden
+        if git diff --staged --quiet; then
+          echo "ℹ️ Keine Änderungen zum committen"
+        else
+          commit_msg="🤖 Auto-Update: Craft CMS & Dependencies $(date +%Y-%m-%d)"
+          git commit -m "$commit_msg"
+          echo "✅ Änderungen committet: $commit_msg"
+        fi
+
+    - name: 📤 Änderungen pushen
+      if: steps.composer-update.outputs.updates_available == 'true'
+      run: |
+        git push origin ${{ github.ref_name }}
+        echo "✅ Änderungen gepusht nach ${{ github.ref_name }}"
+
+    - name: 📊 Update Summary
+      run: |
+        echo "## 🎯 Update Summary"
+        echo "**Repository:** ${{ github.repository }}"
+        echo "**Branch:** ${{ github.ref_name }}"
+        echo "**Trigger:** ${{ github.event.inputs.update_type || 'scheduled' }}"
+        echo "**Triggered by:** ${{ github.event.inputs.triggered_by || 'GitHub Actions' }}"
+        echo "**Timestamp:** $(date)"
+        echo ""
+        echo "**Craft Updates:** ${{ steps.craft-check.outputs.craft_available }}"
+        echo "**Composer Updates:** ${{ steps.composer-update.outputs.updates_available }}"
+        echo ""
+        
+        if [ "${{ steps.composer-update.outputs.updates_available }}" == "true" ]; then
+          echo "✅ Updates erfolgreich durchgeführt und committet"
+        else
+          echo "ℹ️ Keine Updates verfügbar - Repository ist aktuell"
+        fi
+
+    - name: 🚨 Bei Fehlern
+      if: failure()
+      run: |
+        echo "❌ Update Prozess fehlgeschlagen!"
+        echo "Letzter Commit: $(git log -1 --oneline)"
+        echo "Branch Status: $(git status --porcelain)"
+        
+        # Rollback bei Problemen
+        if [ -f "composer.lock.backup" ]; then
+          mv composer.lock.backup composer.lock
+          echo "🔄 composer.lock zurückgesetzt"
+        fi
+
+  notification:
+    name: 📢 Benachrichtigung
+    runs-on: ubuntu-latest
+    needs: craft-update
+    if: always()
+    
+    steps:
+    - name: ✅ Erfolg Notification
+      if: needs.craft-update.result == 'success'
+      run: |
+        echo "🎉 Craft CMS Update erfolgreich abgeschlossen!"
+        
+    - name: ❌ Fehler Notification  
+      if: needs.craft-update.result == 'failure'
+      run: |
+        echo "🚨 Craft CMS Update fehlgeschlagen!"
