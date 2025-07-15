@@ -14,40 +14,44 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: craft
-          MYSQL_USER: craft
-          MYSQL_PASSWORD: craft
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping --silent" --health-interval=10s --health-timeout=5s --health-retries=3
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     steps:
-      - name: 📥 Checkout Repo
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v3
 
-      - name: 📦 Set up PHP
+      - name: 🐘 Set up PHP 8.2
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
-          extensions: mbstring, pdo, mysql, dom, curl, intl, gd, zip, fileinfo
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql, intl, dom, curl, gd, zip, fileinfo
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
 
-      - name: 🧰 Install Composer
+      - name: 🔍 Debug: Show PHP version
+        run: php -v
+
+      - name: 📦 Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
         working-directory: ./mein-test-projekt
 
-      - name: 💾 Backup DB
+      - name: 💾 Backup MySQL-Datenbank
         run: |
           mkdir -p ./backups
-          mysqldump -h 127.0.0.1 -u craft -pcraft craft > ./backups/backup.sql
+          mysqldump -h 127.0.0.1 -u root -proot craft > ./backups/backup.sql
         working-directory: ./mein-test-projekt
 
-      - name: 🔁 Run PHP Craft Update
+      - name: 🔁 Craft Update ausführen
         run: php craft update all
         working-directory: ./mein-test-projekt
 
-      - name: 🧪 
-        run: echo "Here you can add tests."
-
-      - name: ✅ Done
-        run: echo "Done!"
+      - name: ✅ Fertig
+        run: echo "Backup & Update abgeschlossen."
