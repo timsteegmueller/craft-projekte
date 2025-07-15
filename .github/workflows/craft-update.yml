@@ -1,4 +1,8 @@
+name: 🚀 Craft CMS Auto Update & PR
+
 on:
+  schedule:
+    - cron: '0 3 * * 0'  # Jeden Sonntag um 3 Uhr
   workflow_dispatch:
     inputs:
       update_type:
@@ -11,7 +15,7 @@ on:
           - weekly-schedule
           - security-update
           - dependency-update
-      triggered_by:         
+      triggered_by:
         description: 'Triggered by'
         required: false
         default: 'manual'
@@ -39,181 +43,24 @@ jobs:
         fetch-depth: 0
 
     - name: 📋 Workflow Info
-      run: |
-        echo "🎯 Update Type: ${{ github.event.inputs.update_type || 'push-trigger' }}"
-        echo "🤖 Triggered by: ${{ github.event.inputs.triggered_by || 'github-push' }}"
-        echo "📦 Target Repo: ${{ github.event.inputs.target_repo || 'craft-test-repo' }}"
-        
-        # Info für später verwenden
-        echo "update_type=${{ github.event.inputs.update_type || 'push-trigger' }}" >> $GITHUB_OUTPUT
-        echo "triggered_by=${{ github.event.inputs.triggered_by || 'github-push' }}" >> $GITHUB_OUTPUT
       id: info
+      run: |
+        echo "🎯 Update Type: ${{ inputs.update_type || 'auto' }}"
+        echo "🤖 Triggered by: ${{ inputs.triggered_by || 'github' }}"
+        echo "📦 Target Repo: ${{ inputs.target_repo || 'craft-test-repo' }}"
+        
+        echo "update_type=${{ inputs.update_type || 'auto' }}" >> $GITHUB_OUTPUT
+        echo "triggered_by=${{ inputs.triggered_by || 'github' }}" >> $GITHUB_OUTPUT
 
-jobs:
-  multi-repo-update:
-    name: 🔄 Cross-Repo Update
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: 🔄 Management Repo auschecken
-      uses: actions/checkout@v4
+    # Hier kämen weitere Steps für Updates, Composer, PR-Erstellung usw.
+    # Füge deine bestehenden Steps hinzu, z.B. für Backup, Composer update, etc.
+
+    # Beispiel: PR erstellen
+    - name: 🔄 Create Pull Request
+      uses: peter-evans/create-pull-request@v5
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        path: management-repo
-
-    - name: 🔄 Target Craft Repo auschecken
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        repository: timsteegmueller/${{ github.event.inputs.target_repo }}
-        path: craft-repo
-
-    - name: 🐘 PHP Setup
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: '8.1'
-        extensions: mbstring, xml, ctype, json, openssl, pdo, mysql, zip
-        tools: composer:v2
-
-    - name: 📋 Update Branch erstellen
-      id: branch
-      run: |
-        cd craft-repo
-        timestamp=$(date +%Y%m%d-%H%M%S)
-        branch_name="updates/craft-cms-${timestamp}"
-        echo "branch_name=${branch_name}" >> $GITHUB_OUTPUT
-        
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action Bot"
-        git checkout -b ${branch_name}
-        echo "✅ Update Branch erstellt: ${branch_name}"
-
-    - name: 📦 Composer Status prüfen
-      run: |
-        cd craft-repo
-        echo "🔍 Target Repository: ${{ github.event.inputs.target_repo }}"
-        echo "📁 Craft Repo Inhalt:"
-        ls -la
-        
-        if [ -f "composer.json" ]; then
-          echo "✅ composer.json gefunden!"
-          composer validate --strict
-        else
-          echo "❌ composer.json nicht gefunden!"
-          exit 1
-        fi
-
-    - name: 📥 Composer Dependencies installieren
-      run: |
-        cd craft-repo
-        composer install --no-interaction --prefer-dist --optimize-autoloader --ignore-platform-reqs
-
-    - name: 💾 Backup erstellen
-      run: |
-        cd craft-repo
-        mkdir -p storage/backups
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        
-        # Backup composer.lock
-        if [ -f "composer.lock" ]; then
-          cp composer.lock storage/backups/composer.lock.${timestamp}
-        fi
-        
-        # Update Log erstellen
-        cat > storage/backups/update-log-${timestamp}.md << EOF
-        # 🚀 Craft CMS Update Log
-        
-        **Datum:** $(date)
-        **Target Repo:** ${{ github.event.inputs.target_repo }}
-        **Branch:** ${{ steps.branch.outputs.branch_name }}
-        **Triggered from:** craft-projekte (Management Repo)
-        
-        ## 📦 Vor dem Update:
-        \`\`\`
-        $(composer show --direct 2>/dev/null || echo "Keine Dependencies gefunden")
-        \`\`\`
-        EOF
-        
-        echo "✅ Backup erstellt"
-
-    - name: 🔄 Composer Updates durchführen
-      id: composer-update
-      run: |
-        cd craft-repo
-        echo "📦 Führe Composer Updates durch..."
-        
-        # Demo-Update: Beschreibung in composer.json ändern
-        if [ -f "composer.json" ]; then
-          current_date=$(date +"%Y-%m-%d %H:%M")
-          sed -i 's/"description": "\([^"]*\)"/"description": "\1 - Updated '"${current_date}"'"/' composer.json
-          echo "✅ Demo Update: Composer description aktualisiert"
-        fi
-        
-        # Echte Composer Updates
-        composer update --no-interaction --ignore-platform-reqs --dry-run || true
-        
-        echo "updates_made=true" >> $GITHUB_OUTPUT
-
-    - name: 📝 Craft Update Log erstellen
-      run: |
-        cd craft-repo
-        cat > craft-update.log << EOF
-        Cross-Repository Craft CMS Update
-        =================================
-        
-        Timestamp: $(date)
-        Management Repo: craft-projekte
-        Target Repo: ${{ github.event.inputs.target_repo }}
-        Branch: ${{ steps.branch.outputs.branch_name }}
-        
-        Simulated Updates:
-        - Craft CMS Core Updates geprüft
-        - Plugin Dependencies aktualisiert
-        - Cross-repo update erfolgreich
-        
-        Status: Ready for review
-        EOF
-        
-        echo "✅ Craft Update Log erstellt"
-
-    - name: 📝 Änderungen committen
-      run: |
-        cd craft-repo
-        git add .
-        
-        commit_msg="🤖 Cross-Repo Update: Craft CMS (via craft-projekte) $(date +%Y-%m-%d_%H:%M)"
-        git commit -m "$commit_msg" || echo "Keine Änderungen zu committen"
-        
-        echo "✅ Änderungen committet"
-
-    - name: 📤 Update Branch pushen
-      run: |
-        cd craft-repo
-        git push origin ${{ steps.branch.outputs.branch_name }}
-        echo "✅ Branch gepusht: ${{ steps.branch.outputs.branch_name }}"
-
-    - name: 📋 Pull Request erstellen
-      run: |
-        pr_response=$(curl -X POST \
-          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/timsteegmueller/${{ github.event.inputs.target_repo }}/pulls \
-          -d '{
-            "title": "🤖 Cross-Repo Craft CMS Update - '"$(date +%Y-%m-%d)"'",
-            "head": "${{ steps.branch.outputs.branch_name }}",
-            "base": "main",
-            "body": "## 🚀 Cross-Repository Craft CMS Update\n\n**Ausgeführt am:** '"$(date)"'\n**Management Repo:** craft-projekte\n**Target Repo:** ${{ github.event.inputs.target_repo }}\n**Branch:** ${{ steps.branch.outputs.branch_name }}\n\n### ✅ Durchgeführte Aktionen:\n\n- 📦 **Composer Dependencies:** Geprüft und aktualisiert\n- 🔄 **Craft CMS:** Update durchgeführt\n- 💾 **Backup:** Erstellt in storage/backups/\n- 📋 **Update Log:** Siehe craft-update.log\n\n### 🎯 Multi-Repository Setup\n\nDieser Update wurde automatisch vom **craft-projekte** Management Repository ausgelöst.\n\n**Automatisch erstellt von GitHub Actions** 🤖"
-          }')
-        
-        pr_url=$(echo $pr_response | jq -r '.html_url // "ERROR"')
-        echo "✅ Pull Request erstellt: ${pr_url}"
-
-    - name: 📊 Summary
-      run: |
-        echo "## 🎯 Multi-Repo Update Summary"
-        echo "**Management Repo:** craft-projekte"
-        echo "**Target Repo:** ${{ github.event.inputs.target_repo }}"
-        echo "**Branch:** ${{ steps.branch.outputs.branch_name }}"
-        echo "**Updates:** ${{ steps.composer-update.outputs.updates_made }}"
-        echo ""
-        echo "✅ Cross-Repository Update abgeschlossen!"
+        commit-message: "🔄 Auto-update Craft CMS dependencies"
+        title: "🔄 [AUTO] Weekly Craft CMS Update"
+        body: "Automatisches Update via ${{ inputs.triggered_by }} - Type: ${{ inputs.update_type }}"
+        branch: auto-update-${{ github.run_id }}
