@@ -469,6 +469,27 @@ jobs:
     if: always()
     
     steps:
+    - name: 📧 Notification Status ermitteln
+      id: status
+      run: |
+        # Status Logic in Shell Script statt GitHub Expression
+        if [ "${{ needs.craft-update.outputs.updates_available }}" = "true" ] && [ -n "${{ needs.craft-update.outputs.pr_number }}" ]; then
+          status="✅ Updates/Initialisierung erfolgreich - PR erstellt (Nummer: ${{ needs.craft-update.outputs.pr_number }})"
+        elif [ "${{ needs.craft-update.outputs.updates_available }}" = "true" ]; then
+          status="⚠️ Updates gefunden - PR Fehler"
+        else
+          status="ℹ️ Keine Updates verfügbar"
+        fi
+        
+        if [ "${{ needs.craft-update.outputs.project_initialized }}" = "true" ]; then
+          action_type="Neue Craft CMS Installation"
+        else
+          action_type="Update Check"
+        fi
+        
+        echo "status=${status}" >> $GITHUB_OUTPUT
+        echo "action_type=${action_type}" >> $GITHUB_OUTPUT
+
     - name: 📧 E-Mail Notification
       uses: dawidd6/action-send-mail@v3
       with:
@@ -476,17 +497,15 @@ jobs:
         server_port: ${{ secrets.MAIL_PORT }}
         username: ${{ secrets.MAIL_USERNAME }}
         password: ${{ secrets.MAIL_PASSWORD }}
-        subject: |
-          Craft CMS ${{ needs.craft-update.outputs.project_initialized == 'true' && 'Project Initialized' || 'Update Check Complete' }} - ${{ needs.craft-update.outputs.update_type || 'scheduled' }}
+        subject: 'Craft CMS ${{ steps.status.outputs.action_type }} Complete - ${{ needs.craft-update.outputs.update_type || ''scheduled'' }}'
         to: tim.steegmueller@farbcode.net
         from: ${{ secrets.MAIL_FROM }}
         body: |
           Craft CMS Auto-Update Bericht
           
-          **Status:** 
-          ${{ needs.craft-update.outputs.updates_available == 'true' && needs.craft-update.outputs.pr_number != '' ? '✅ Updates/Initialisierung erfolgreich - PR erstellt (Nummer: ' + needs.craft-update.outputs.pr_number + ')' : (needs.craft-update.outputs.updates_available == 'true' ? '⚠️ Updates gefunden - PR Fehler' : 'ℹ️ Keine Updates verfügbar') }}
+          **Status:** ${{ steps.status.outputs.status }}
           
-          **Action Type:** ${{ needs.craft-update.outputs.project_initialized == 'true' && 'Neue Craft CMS Installation' || 'Update Check' }}
+          **Action Type:** ${{ steps.status.outputs.action_type }}
           **Update Type:** ${{ needs.craft-update.outputs.update_type || 'scheduled' }}
           **Triggered By:** ${{ needs.craft-update.outputs.triggered_by || 'github-scheduler' }}
           **Pre-Update Backup:** ${{ needs.pre-update-backup.outputs.backup_file }}
