@@ -22,10 +22,6 @@ jobs:
           extensions: mbstring, intl, pdo_mysql, gd, zip
           tools: composer
 
-      - name: 🗄️ Datenbank-Backup via SSH
-        run: |
-          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST \
-            "mysqldump -u${{ secrets.DB_USER }} -p${{ secrets.DB_PASS }} $DB_NAME > ~/backups/backup-$(date +%Y%m%d).sql"
 
       - name: 📦 Composer Update Check
         id: update
