@@ -39,6 +39,20 @@ jobs:
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
         working-directory: ./mein-test-projekt
 
+      - name: 📄 Schreibe .env-Datei für Craft
+        run: |
+            echo "APP_ID=craft-update" >> .env
+            echo "CRAFT_LICENSE_KEY=${{ secrets.CRAFT_LICENSE_KEY }}" >> .env
+            echo "DB_DRIVER=mysql" >> .env
+            echo "DB_SERVER=127.0.0.1" >> .env
+            echo "DB_PORT=3306" >> .env
+            echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+            echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+            echo "DB_DATABASE=${{ secrets.DB_NAME }}" >> .env
+            echo "DB_TABLE_PREFIX=" >> .env
+            echo "DB_SCHEMA=public" >> .env
+                working-directory: ./mein-test-projekt
+
       - name: 💾 Backup DB
         run: |
           mkdir -p ./backups
