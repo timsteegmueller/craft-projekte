@@ -6,13 +6,100 @@
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Automated-blue?style=for-the-badge&logo=github-actions)
 ![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?style=for-the-badge&logo=php)
 ![MySQL](https://img.shields.io/badge/MySQL-5.7%2B-4479A1?style=for-the-badge&logo=mysql)
-![Status](https://img.shields.io/badge/Status-Production%20Ready-success?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-0.8.0--beta-orange?style=for-the-badge)
 
 **Automatische Backup & Update Pipeline für CraftCMS mit Zero-Risk Deployment**
 
 [🎯 Features](#-features) • [⚡ Quick Start](#-quick-start) • [🔧 Konfiguration](#-konfiguration) • [📊 Monitoring](#-monitoring) • [🚨 Troubleshooting](#-troubleshooting)
 
 </div>
+
+---
+
+## 🚧 Development Status
+
+### ⚠️ **Current State: Client Project Development**
+
+Dieses System wird aktuell als **Werkstudentenprojekt bei farbcode** entwickelt zur Automatisierung der CraftCMS-Updates für Client-Projekte. Status: **In aktiver Entwicklung**.
+
+### 📋 **Original Requirements (farbcode)**
+
+**🎯 Projektziel:**
+- Verständnis für CI/CD-Prozesse im Webentwicklungsumfeld
+- Praktische Erfahrung mit n8n zur Automatisierung technischer Prozesse  
+- Umgang mit Composer, Craft CMS, GitHub API, Envoyer Deployments und automatisierten Backups
+- Sicherheit im Umgang mit Fehlerfällen, Monitoring und einfachen Tests
+- Erkennen, wie Deployment-Workflows in einem professionellen Setup orchestriert werden
+
+**🔧 Technische Anforderungen:**
+1. **Überwachung:** n8n prüft in definierten Zyklen (wöchentlich/monatlich) ob Updates verfügbar sind
+2. **Update-Aktion:** `php craft update all` ausführen (composer update dahinter)
+3. **GitHub Integration:** Aktualisierte `composer.lock` als Pull Request einreichen
+4. **Backup:** Vor jedem Update Datenbank-Backup erstellen
+5. **Health Check:** HTTP 200 Test nach Update, 500er Fehler erkennen und melden
+
+**✅ Definition of Done:**
+- [x] n8n läuft automatisch und regelmäßig
+- [x] Automatische PR-Erstellung mit aktualisierten Dependencies  
+- [x] Datenbank-Backup vor jedem Update
+- [x] Automatischer HTTP 200 Funktionstest nach Update
+- [x] 500er Fehler werden in Log/Alert dokumentiert
+- [x] Modulares System für neue Craft-Projekte
+- [x] Dokumentation für Projekt-Hinzufügung und manuelle Auslösung
+
+### ✅ **Implementierungsstatus:**
+
+- [x] 📝 **GitHub Actions Workflow** - YAML-Struktur und PHP/MySQL Setup
+- [x] 🎨 **n8n Workflow Design** - Komplette Orchestrierung implementiert
+- [x] 🔧 **Repository Dispatch** - Trigger-Mechanismus funktional
+- [x] 💾 **Database Backup Logic** - mysqldump Integration
+- [x] 📦 **Composer/Craft Updates** - `php craft update all` Pipeline
+- [x] 📡 **Webhook Integration** - n8n ↔ GitHub Actions Kommunikation
+- [x] 📤 **Auto Pull Request** - Automatische PR-Erstellung bei Success
+- [x] 🏥 **Health Checks** - HTTP 200/500 Monitoring
+- [x] 💬 **Slack Notifications** - Success/Error Alerts implementiert
+
+### 🚨 **Known Issues & Testing Status:**
+
+- [ ] 🔐 **Secrets Configuration** - GitHub API Token Setup in Produktion
+- [ ] 🗄️ **MySQL Health Checks** - Timeout-Optimierung erforderlich  
+- [ ] 📡 **n8n Production Setup** - Webhook-Endpoints konfigurieren
+- [ ] 🏥 **Live Health Testing** - Client-Domain Integration
+- [ ] 📤 **Branch Management** - PR-Workflow mit Client-Repos testen
+- [ ] 🔄 **Laravel Envoyer** - Deployment-Pipeline Integration
+
+### 🎯 **Production Roadmap:**
+
+#### Phase 1: Core Integration (Q1 2025)
+- [ ] farbcode n8n Instanz Setup
+- [ ] Client-Repository GitHub Actions aktivieren
+- [ ] MySQL Backup/Restore Workflow testen
+- [ ] Erste Client-Projekt Integration
+
+#### Phase 2: Monitoring & Error Handling (Q1 2025)
+- [ ] Slack-Integration in farbcode Workspace
+- [ ] Error-Handling für verschiedene Fehlerszenarien
+- [ ] Rollback-Prozeduren dokumentieren und testen
+
+#### Phase 3: Multi-Client Scaling (Q2 2025)
+- [ ] Template für neue Client-Projekte
+- [ ] Batch-Update Funktionalität
+- [ ] Client-spezifische Konfigurationen
+- [ ] Monitoring Dashboard für alle Projekte
+
+### 💼 **Client Integration Requirements:**
+
+**Für neue farbcode Client-Projekte:**
+1. **GitHub Repository** mit CraftCMS-Projekt
+2. **Laravel Envoyer** Deployment-Setup  
+3. **Datenbank-Zugriff** für Backup-Erstellung
+4. **Domain Health Check** Endpoint konfigurieren
+5. **Slack Channel** für Update-Notifications
+
+---
+
+> **💼 Business Context:** Entwickelt als Werkstudentenprojekt bei farbcode zur Automatisierung der CraftCMS-Wartung für Client-Projekte. Ziel ist eine skalierbare, sichere Update-Pipeline für das Produktionsumfeld.
 
 ---
 
@@ -828,9 +915,9 @@ SOFTWARE.
 
 <div align="center">
 
-**Entwickelt mit ❤️ für die CraftCMS Community von [Tim Steegmüller](https://github.com/timsteegmueller)**
+**Entwickelt als Werkstudentenprojekt bei [farbcode](https://farbcode.de) von [Tim Steegmüller](https://github.com/timsteegmueller)**
 
-
+**Client Project • CraftCMS Automation • 2025**
 
 [![GitHub stars](https://img.shields.io/github/stars/timsteegmueller/craft-auto-updater?style=social)](https://github.com/timsteegmueller/craft-auto-updater)
 [![GitHub forks](https://img.shields.io/github/forks/timsteegmueller/craft-auto-updater?style=social)](https://github.com/timsteegmueller/craft-auto-updater/fork)
