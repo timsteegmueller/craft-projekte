@@ -607,7 +607,7 @@ SOFTWARE.
 
 **Entwickelt mit ❤️ für die CraftCMS Community von [Tim Steegmüller](https://github.com/timsteegmueller)**
 
-**HdM Stuttgart • Informationsdesign • 2025**
+
 
 [![GitHub stars](https://img.shields.io/github/stars/timsteegmueller/craft-auto-updater?style=social)](https://github.com/timsteegmueller/craft-auto-updater)
 [![GitHub forks](https://img.shields.io/github/forks/timsteegmueller/craft-auto-updater?style=social)](https://github.com/timsteegmueller/craft-auto-updater/fork)
