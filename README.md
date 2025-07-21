@@ -188,76 +188,299 @@ strategy:
         mysql_version: "8.0"
 ```
 
-### ⏰ **Automatische Trigger einrichten**
+### ⏰ **n8n Orchestrierung Setup**
 
-#### Via GitHub Actions (Cron):
-```yaml
-on:
-  schedule:
-    # Jeden Sonntag um 2:00 Uhr
-    - cron: '0 2 * * 0'
-  repository_dispatch:
-    types: [run-backup-und-update]
-```
+#### Kompletter n8n Workflow Import:
 
-#### Via n8n Workflow:
 ```json
 {
-  "method": "POST",
-  "url": "https://api.github.com/repos/USERNAME/REPO/dispatches",
-  "headers": {
-    "Authorization": "token YOUR_GITHUB_TOKEN",
-    "Accept": "application/vnd.github.v3+json"
-  },
-  "body": {
-    "event_type": "run-backup-und-update"
+  "name": "Tim PHP Updater",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks", 
+              "triggerAtHour": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "name": "⏰ Weekly Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/timsteegmueller/craft-projekte/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": {
+          "event_type": "run-backup-und-update",
+          "client_payload": {
+            "project_path": "."
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "🚀 Trigger GitHub Action"
+    }
+  ]
+}
+```
+
+#### n8n Workflow Features:
+
+**🔄 Automatisierte Pipeline:**
+- ⏰ **Weekly Schedule** - Jeden Sonntag um 3:00 Uhr
+- 🚀 **GitHub Dispatch** - Löst Repository Dispatch Event aus
+- 📊 **Action Monitoring** - Überwacht GitHub Actions Status
+- ✅ **Success Detection** - Erkennt erfolgreiche/fehlgeschlagene Runs
+- 📤 **Auto Pull Request** - Erstellt automatisch PRs bei Erfolg
+- 🏥 **Health Checks** - Website-Verfügbarkeit nach Updates
+- 💬 **Slack Integration** - Team-Benachrichtigungen
+
+**🔧 Setup Anleitung:**
+1. n8n Workflow aus [GitHub Repository](https://github.com/timsteegmueller/craft-projekte) importieren
+2. GitHub API Credentials in n8n konfigurieren
+3. Slack Webhook URL als Secret hinzufügen
+4. Website Health Check URL anpassen
+
+---
+
+## 🎛️ n8n Orchestrierung Setup
+
+### 📥 **n8n Workflow Installation**
+
+```bash
+# n8n Workflow aus Repository holen
+curl -o craft-updater-workflow.json \
+  https://raw.githubusercontent.com/timsteegmueller/craft-auto-updater/main/n8n/workflow.json
+
+# In n8n Dashboard importieren:
+# Settings → Import from file → craft-updater-workflow.json
+```
+
+### 🔧 **n8n Credentials konfigurieren**
+
+| Credential Type | Name | Verwendung |
+|-----------------|------|------------|
+| **GitHub API** | `GitHub account` | Repository Dispatch & Status Monitoring |
+| **HTTP Header Auth** | `Laravel Forge` | Webhook Authentication |
+| **Slack Webhook** | Via `FARBCODE_SLACK_WEBHOOK` Secret | Team Notifications |
+
+### 🎯 **Workflow-Komponenten im Detail**
+
+#### 1. ⏰ **Schedule Trigger**
+```javascript
+// Jede Woche Sonntag um 3:00 Uhr
+{
+  "rule": {
+    "interval": [{
+      "field": "weeks",
+      "triggerAtHour": 3
+    }]
   }
 }
 ```
 
-### 🔔 **Erweiterte Notification-Channels**
+#### 2. 📋 **GitHub Configuration Node**
+```javascript
+// Dynamische Repository-Konfiguration
+const isGitHub = $input.first().json.repository !== undefined;
+const repo = isGitHub ? $input.first().json.repository.name : 'craft-projekte';
+const owner = 'timsteegmueller';
+const branch = isGitHub ? $input.first().json.pull_request?.head?.ref || 'main' : 'main';
 
-#### Slack Integration:
-```yaml
-- name: 📢 Slack Notification
-  if: always()
-  uses: 8398a7/action-slack@v3
-  with:
-    status: ${{ job.status }}
-    webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-    channel: '#craft-updates'
-    text: '🚀 CraftCMS Update für ${{ github.repository }} abgeschlossen!'
+return [{
+  json: {
+    repo: repo,
+    owner: owner,
+    branch: branch,
+    source: isGitHub ? 'github-pr' : 'weekly-schedule',
+    full_name: `${owner}/${repo}`,
+    clone_url: `https://github.com/${owner}/${repo}.git`
+  }
+}];
 ```
 
-#### Discord Integration:
-```yaml
-- name: 🎮 Discord Alert
-  uses: Ilshidur/action-discord@master
-  with:
-    args: '💾 Backup & Update für {{ EVENT_PAYLOAD.repository }} erfolgreich!'
-  env:
-    DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+#### 3. 🚀 **Repository Dispatch Trigger**
+```json
+{
+  "method": "POST",
+  "url": "https://api.github.com/repos/timsteegmueller/craft-projekte/dispatches",
+  "headers": {
+    "Authorization": "Bearer {{ $env.GITHUB_TOKEN }}",
+    "Accept": "application/vnd.github+json"
+  },
+  "body": {
+    "event_type": "run-backup-und-update",
+    "client_payload": {
+      "project_path": "."
+    }
+  }
+}
+```
+
+#### 4. 📊 **GitHub Actions Status Monitor**
+```javascript
+// Überwacht Action-Status in Echtzeit
+const statusCheck = await $http.request({
+  url: `https://api.github.com/repos/${owner}/${repo}/actions/runs`,
+  headers: { Authorization: `Bearer ${githubToken}` }
+});
+
+// Prüft auf completion und success
+if (statusCheck.workflow_runs[0].status === 'completed' && 
+    statusCheck.workflow_runs[0].conclusion === 'success') {
+  // Erfolgreiche Completion → PR erstellen
+}
+```
+
+#### 5. 📤 **Automatische Pull Request Erstellung**
+```json
+{
+  "title": "🤖 Automated Craft CMS Updates",
+  "head": "updates/{{ $now.format('YYYY-MM-DD-HH-mm') }}",
+  "base": "main",
+  "body": "## 🚀 Automatic Craft CMS Update\n\n**Triggered by:** {{ source }}\n**Timestamp:** {{ $now.format('DD.MM.YYYY HH:mm') }}\n\n### ✅ Completed Actions:\n- 💾 Database backup via GitHub Actions\n- 🔄 Craft CMS updates: `php craft update all`\n- 📦 Composer dependency updates\n- 🧪 Automated tests passed\n\n**Ready for review and merge! 🎯**"
+}
+```
+
+#### 6. 🏥 **Health Check Integration**
+```javascript
+// Website-Verfügbarkeit nach Update prüfen
+const healthCheck = await $http.request({
+  url: `https://${repo}.farbcode.de`,
+  timeout: 15000
+});
+
+if (healthCheck.statusCode === 200) {
+  // Website ist erreichbar → Success Notification
+} else {
+  // Problem erkannt → Alert senden
+}
+```
+
+#### 7. 💬 **Slack Notifications**
+
+**Success Notification:**
+```json
+{
+  "channel": "#general",
+  "username": "craft-automation",
+  "icon_emoji": ":rocket:",
+  "text": "🚀 Craft CMS Update erfolgreich!",
+  "attachments": [{
+    "color": "good",
+    "title": "✅ GitHub Action Complete",
+    "fields": [
+      { "title": "Repository", "value": "{{ full_name }}", "short": true },
+      { "title": "Branch", "value": "{{ branch }}", "short": true },
+      { "title": "Status", "value": "✅ Ready for review", "short": true }
+    ]
+  }]
+}
+```
+
+**Error Notification:**
+```json
+{
+  "channel": "#alerts",
+  "username": "craft-automation", 
+  "icon_emoji": ":warning:",
+  "text": "🚨 Craft CMS Update failed!",
+  "attachments": [{
+    "color": "danger",
+    "title": "❌ GitHub Action Failed",
+    "fields": [
+      { "title": "Repository", "value": "{{ full_name }}", "short": true },
+      { "title": "Error", "value": "{{ conclusion }}", "short": true }
+    ]
+  }]
+}
+```
+
+### 🔗 **Webhook Endpoints**
+
+#### Externe Trigger:
+```bash
+# POST /github-event/backup-update
+curl -X POST "https://your-n8n.domain.com/webhook/github-event/backup-update" \
+  -H "Authorization: Bearer YOUR_WEBHOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repository": {"name": "craft-projekte"},
+    "trigger_source": "manual"
+  }'
+```
+
+#### GitHub Webhook Integration:
+```json
+{
+  "url": "https://your-n8n.domain.com/webhook/github-event/backup-update",
+  "content_type": "application/json",
+  "events": ["repository_dispatch", "workflow_run"],
+  "active": true
+}
+```
+
+### 📊 **Monitoring Dashboard**
+
+n8n bietet ein integriertes Monitoring für den Workflow:
+
+- **Execution History** - Alle Workflow-Runs mit Status
+- **Error Logs** - Detaillierte Fehlermeldungen
+- **Performance Metrics** - Laufzeiten pro Node
+- **Active Workflows** - Status der Schedule Trigger
+
+```bash
+# n8n CLI Monitoring Commands
+n8n list:workflow
+n8n execute:workflow --id 3CAvRbzJBp9D0By7
+n8n export:workflow --id 3CAvRbzJBp9D0By7
 ```
 
 ---
 
 ## 📊 Monitoring
 
-### 📈 **Workflow-Architektur**
+### 📈 **Enterprise Workflow-Architektur**
 
 ```mermaid
 graph TD
-    A[Repository Dispatch Trigger] --> B[Ubuntu Runner Setup]
-    B --> C[MySQL 5.7 Service Start]
-    C --> D[PHP 8.2 Environment]
-    D --> E[Composer Install]
-    E --> F[Database Backup]
-    F --> G[CraftCMS Update All]
-    G --> H{Update Success?}
-    H -->|✅ Success| I[n8n Webhook Call]
-    H -->|❌ Error| J[Error Notification]
-    I --> K[Completion Log]
-    J --> L[Rollback Available]
+    A[⏰ n8n Weekly Trigger] --> B[📋 GitHub Config]
+    B --> C[🚀 Repository Dispatch]
+    C --> D[🤖 GitHub Actions Runner]
+    D --> E[📦 PHP 8.2 Setup]
+    E --> F[🗄️ MySQL 5.7 Service]
+    F --> G[💾 Database Backup]
+    G --> H[🔄 CraftCMS Update All]
+    H --> I{Update Success?}
+    I -->|✅ Success| J[📊 n8n Status Check]
+    I -->|❌ Error| K[🚨 Slack Alert]
+    J --> L[📤 Auto Pull Request]
+    L --> M[🏥 Website Health Check]
+    M --> N[✅ Slack Success Notification]
+    K --> O[🔄 Manual Intervention Required]
+    
+    subgraph "n8n Orchestration Layer"
+        P[⏰ Schedule Trigger]
+        Q[🔗 Webhook Endpoint]
+        R[📊 GitHub API Monitor]
+        S[💬 Slack Integration]
+    end
+    
+    subgraph "GitHub Actions Layer"
+        T[🤖 Ubuntu Runner]
+        U[📦 Composer Install]
+        V[💾 MySQL Backup]
+        W[🔄 Craft Update]
+        X[📡 Webhook Response]
+    end
 ```
 
 ### 🔍 **Status Monitoring Dashboard**
