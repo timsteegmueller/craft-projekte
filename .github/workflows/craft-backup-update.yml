@@ -1,18 +1,15 @@
-# ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.3 – Root)
-# ====================================================================================
 name: 💾 CraftCMS Auto Backup & Update
 
 on:
   repository_dispatch:
-    types: [run-backup-und-update]
+    types:
+      - run-backup-und-update
 
 jobs:
   craft-auto-update:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     services:
       mysql:
         image: mysql:5.7
@@ -30,55 +27,44 @@ jobs:
           --health-retries=5
 
     steps:
-      - name: 📥 Checkout Repo
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: 📦 Set up PHP
+      - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: '8.2'
           extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
-          ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
+          ini-values: memory_limit=512M,post_max_size=64M,upload_max_filesize=64M
           coverage: none
 
-      - name: ✅ Check composer.lock
-        run: |
-          if [ ! -f composer.lock ]; then
-            echo "::error::composer.lock nicht gefunden!"
-            exit 1
-          fi
-
-      - name: 🧰 Install Composer Dependencies
+      - name: Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: 🐛 DEBUG: Show project root
-        run: ls -la .
-
-      - name: 💾 Backup Database
+      - name: Backup Database
         env:
           MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
           mkdir -p backups
-          mysqldump --no-tablespaces -h127.0.0.1 -u"${{ secrets.MYSQL_USER }}" "${{ secrets.MYSQL_DATABASE }}" > backups/backup_$(date +%F).sql
+          mysqldump --no-tablespaces -h127.0.0.1 -u${{ secrets.MYSQL_USER }} ${{ secrets.MYSQL_DATABASE }} > backups/backup_$(date +'%F').sql
 
-      - name: 📝 Create .env
+      - name: Create .env
         run: |
-          echo "DB_DRIVER=mysql"                                      > .env
-          echo "DB_SERVER=127.0.0.1"                                  >> .env
-          echo "DB_PORT=3306"                                         >> .env
-          echo "DB_DATABASE=${{ secrets.MYSQL_DATABASE }}"            >> .env
-          echo "DB_USER=${{ secrets.MYSQL_USER }}"                    >> .env
-          echo "DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}"            >> .env
-          echo "SECURITY_KEY=${{ secrets.SECURITY_KEY }}"              >> .env
-          echo "ENVIRONMENT=dev"                                      >> .env
+          cat <<EOF > .env
+          DB_DRIVER=mysql
+          DB_SERVER=127.0.0.1
+          DB_PORT=3306
+          DB_DATABASE=${{ secrets.MYSQL_DATABASE }}
+          DB_USER=${{ secrets.MYSQL_USER }}
+          DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+          SECURITY_KEY=${{ secrets.SECURITY_KEY }}
+          ENVIRONMENT=dev
+          EOF
 
-      - name: 🐛 DEBUG: Show .env
-        run: cat .env
-
-      - name: 🧪 Test Craft DB Connection
+      - name: Test DB Connection
         run: php vendor/bin/craft setup/db-creds --interactive=0
 
-      - name: 🔁 Run PHP Craft Update
+      - name: Run Craft Update
         env:
           DB_DRIVER:         mysql
           DB_SERVER:         127.0.0.1
@@ -90,28 +76,19 @@ jobs:
           CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
         run: php vendor/bin/craft update all --interactive=0
 
-      - name: 📝 Configure Git
+      - name: Configure Git
         run: |
           git config --global user.name  'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: ✨ Commit & Push Changes
-        id: commit_push
+      - name: Commit & Push Changes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if git diff --quiet --exit-code composer.lock composer.json; then
-            echo "No changes"
-            echo "changes_pushed=false" >> $GITHUB_OUTPUT
-          else
-            BR="updates/automated-craft-$(date +%F)"
+          if ! git diff --quiet composer.lock composer.json; then
+            BR=updates/automated-craft-$(date +'%F')
             git checkout -b $BR
             git add composer.lock composer.json
             git commit -m "chore(deps): Autom. Craft & Plugin Updates"
             git push --set-upstream origin $BR
-            echo "changes_pushed=true"  >> $GITHUB_OUTPUT
-            echo "branch_name=$BR"      >> $GITHUB_OUTPUT
           fi
-
-      - name: ✅ Done
-        run: echo "Backup & Update erfolgreich abgeschlossen."
