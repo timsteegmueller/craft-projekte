@@ -66,13 +66,13 @@ jobs:
 
       - name: Run Craft Update
         env:
-          DB_DRIVER:         mysql
-          DB_SERVER:         127.0.0.1
-          DB_PORT:           3306
-          DB_DATABASE:       ${{ secrets.MYSQL_DATABASE }}
-          DB_USER:           ${{ secrets.MYSQL_USER }}
-          DB_PASSWORD:       ${{ secrets.MYSQL_PASSWORD }}
-          SECURITY_KEY:      ${{ secrets.SECURITY_KEY }}
+          DB_DRIVER: "mysql"
+          DB_SERVER: "127.0.0.1"
+          DB_PORT: "3306"
+          DB_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          DB_USER: ${{ secrets.MYSQL_USER }}
+          DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          SECURITY_KEY: ${{ secrets.SECURITY_KEY }}
           CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
         run: php vendor/bin/craft update all --interactive=0
 
