@@ -39,7 +39,9 @@ jobs:
           coverage: none
 
       - name: Install Composer Dependencies
-        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        run: |
+            composer validate
+            composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
       - name: Backup Database
         env:
