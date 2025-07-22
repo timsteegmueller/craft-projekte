@@ -40,18 +40,14 @@ jobs:
 
       - name: Install Composer Dependencies
         run: |
-        echo "Current directory contents:"
-        ls -la
-        echo "Composer version:"
-        composer --version
-        echo "Validating composer.json:"
+        echo "=== Composer Validation ==="
         composer validate
-        echo "Installing dependencies:"
+        echo "=== Installing Dependencies ==="
         composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --verbose
-        echo "Checking if craft binary exists:"
+        echo "=== Checking vendor/bin directory ==="
         ls -la vendor/bin/ || echo "vendor/bin directory doesn't exist"
-        echo "Checking vendor directory:"
-        ls -la vendor/ || echo "vendor directory doesn't exist"
+        echo "=== Checking for craft executable ==="
+        test -f vendor/bin/craft && echo "✅ craft executable found" || echo "❌ craft executable missing"
 
       - name: Backup Database
         env:
