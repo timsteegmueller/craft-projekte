@@ -28,7 +28,7 @@ jobs:
     # Läuft auf dem neuesten Ubuntu-Runner, was kosteneffizient und performant ist.
     runs-on: ubuntu-latest
     
-    # HIER WERDEN DIE BERECHTIGUNGEN FÜR DAS AUTOMATISCHE GITHUB_TOKEN FESTGELEGT
+    # Hier werden die Berechtigungen für den GITHUB_TOKEN für DIESEN Job festgelegt.
     permissions:
       # Schreibrechte für den Inhalt sind für den 'git push' Befehl erforderlich.
       contents: write
