@@ -1,5 +1,5 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.2 – Root-Verzeichnis)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.3 – Root)
 # ====================================================================================
 name: 💾 CraftCMS Auto Backup & Update
 
@@ -42,7 +42,6 @@ jobs:
           coverage: none
 
       - name: ✅ Check composer.lock
-        working-directory: ./mein-test-projekt
         run: |
           if [ ! -f composer.lock ]; then
             echo "::error::composer.lock nicht gefunden!"
@@ -50,15 +49,12 @@ jobs:
           fi
 
       - name: 🧰 Install Composer Dependencies
-        working-directory: ./mein-test-projekt
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: 🐛 DEBUG: Zeige Projektstruktur
-        working-directory: ./mein-test-projekt
+      - name: 🐛 DEBUG: Show project root
         run: ls -la .
 
       - name: 💾 Backup Database
-        working-directory: ./mein-test-projekt
         env:
           MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
@@ -66,7 +62,6 @@ jobs:
           mysqldump --no-tablespaces -h127.0.0.1 -u"${{ secrets.MYSQL_USER }}" "${{ secrets.MYSQL_DATABASE }}" > backups/backup_$(date +%F).sql
 
       - name: 📝 Create .env
-        working-directory: ./mein-test-projekt
         run: |
           echo "DB_DRIVER=mysql"                                      > .env
           echo "DB_SERVER=127.0.0.1"                                  >> .env
@@ -77,16 +72,13 @@ jobs:
           echo "SECURITY_KEY=${{ secrets.SECURITY_KEY }}"              >> .env
           echo "ENVIRONMENT=dev"                                      >> .env
 
-      - name: 🐛 DEBUG: .env-Inhalt
-        working-directory: ./mein-test-projekt
+      - name: 🐛 DEBUG: Show .env
         run: cat .env
 
       - name: 🧪 Test Craft DB Connection
-        working-directory: ./mein-test-projekt
         run: php vendor/bin/craft setup/db-creds --interactive=0
 
       - name: 🔁 Run PHP Craft Update
-        working-directory: ./mein-test-projekt
         env:
           DB_DRIVER:         mysql
           DB_SERVER:         127.0.0.1
@@ -104,7 +96,6 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
       - name: ✨ Commit & Push Changes
-        working-directory: ./mein-test-projekt
         id: commit_push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
