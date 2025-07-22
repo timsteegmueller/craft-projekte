@@ -1,5 +1,5 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.0 – Final Debugging)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.1 – Fix)
 # ====================================================================================
 name: 💾 CraftCMS Auto Backup & Update
 
@@ -41,7 +41,7 @@ jobs:
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
 
-      - name: ✅ Check for composer.lock
+      - name: ✅ Check composer.lock
         working-directory: ./mein-test-projekt/web
         run: |
           if [ ! -f composer.lock ]; then
@@ -53,23 +53,31 @@ jobs:
         working-directory: ./mein-test-projekt/web
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: 🐛 DEBUG: List files after composer install
+      - name: 🐛 DEBUG: List files
         working-directory: ./mein-test-projekt/web
         run: ls -la
+
+      - name: 💾 Backup Database
+        working-directory: ./mein-test-projekt/web
+        env:
+          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
+        run: |
+          mkdir -p backups
+          mysqldump --no-tablespaces -h127.0.0.1 -u"${{ secrets.MYSQL_USER }}" "${{ secrets.MYSQL_DATABASE }}" > backups/backup_$(date +%F).sql
 
       - name: 📝 Create .env
         working-directory: ./mein-test-projekt/web
         run: |
-          echo "DB_DRIVER=mysql"       > .env
-          echo "DB_SERVER=127.0.0.1"   >> .env
-          echo "DB_PORT=3306"          >> .env
+          echo "DB_DRIVER=mysql"         > .env
+          echo "DB_SERVER=127.0.0.1"     >> .env
+          echo "DB_PORT=3306"            >> .env
           echo "DB_DATABASE=${{ secrets.MYSQL_DATABASE }}" >> .env
           echo "DB_USER=${{ secrets.MYSQL_USER }}"         >> .env
           echo "DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
           echo "SECURITY_KEY=${{ secrets.SECURITY_KEY }}"   >> .env
-          echo "ENVIRONMENT=dev"       >> .env
+          echo "ENVIRONMENT=dev"         >> .env
 
-      - name: 🐛 DEBUG: Show .env content
+      - name: 🐛 DEBUG: Show .env
         working-directory: ./mein-test-projekt/web
         run: cat .env
 
@@ -80,13 +88,13 @@ jobs:
       - name: 🔁 Run PHP Craft Update
         working-directory: ./mein-test-projekt/web
         env:
-          DB_DRIVER:       mysql
-          DB_SERVER:       127.0.0.1
-          DB_PORT:         3306
-          DB_DATABASE:     ${{ secrets.MYSQL_DATABASE }}
-          DB_USER:         ${{ secrets.MYSQL_USER }}
-          DB_PASSWORD:     ${{ secrets.MYSQL_PASSWORD }}
-          SECURITY_KEY:    ${{ secrets.SECURITY_KEY }}
+          DB_DRIVER:        mysql
+          DB_SERVER:        127.0.0.1
+          DB_PORT:          3306
+          DB_DATABASE:      ${{ secrets.MYSQL_DATABASE }}
+          DB_USER:          ${{ secrets.MYSQL_USER }}
+          DB_PASSWORD:      ${{ secrets.MYSQL_PASSWORD }}
+          SECURITY_KEY:     ${{ secrets.SECURITY_KEY }}
           CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
         run: php vendor/bin/craft update all --interactive=0
 
@@ -95,24 +103,24 @@ jobs:
           git config --global user.name  'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-      - name: ✨ Create Branch, Commit and Push Changes
-        id: commit_push
-        run: |
-          if git diff --quiet --exit-code composer.lock composer.json; then
-            echo "Keine neuen Updates."
-            echo "changes_pushed=false" >> $GITHUB_OUTPUT
-          else
-            BRANCH="updates/automated-craft-updates-$(date +%Y-%m-%d)"
-            git checkout -b $BRANCH
-            git add composer.lock composer.json
-            git commit -m "chore(deps): 🤖 Automatisierte Craft CMS & Plugin Updates"
-            git push --set-upstream origin $BRANCH
-            echo "changes_pushed=true"  >> $GITHUB_OUTPUT
-            echo "branch_name=$BRANCH" >> $GITHUB_OUTPUT
-          fi
+      - name: ✨ Commit & Push
         working-directory: ./mein-test-projekt/web
+        id: commit_push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet --exit-code composer.lock composer.json; then
+            echo "No changes"
+            echo "changes_pushed=false" >> $GITHUB_OUTPUT
+          else
+            BR="updates/automated-craft-$(date +%F)"
+            git checkout -b $BR
+            git add composer.lock composer.json
+            git commit -m "chore(deps): Autom. Craft & Plugin Updates"
+            git push --set-upstream origin $BR
+            echo "changes_pushed=true"  >> $GITHUB_OUTPUT
+            echo "branch_name=$BR"      >> $GITHUB_OUTPUT
+          fi
 
       - name: ✅ Done
-        run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
+        run: echo "Backup & Update erfolgreich."
