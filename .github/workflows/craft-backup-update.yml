@@ -92,10 +92,18 @@ jobs:
         run: php craft setup/db-creds --interactive=0
         working-directory: ./mein-test-projekt
 
-      # Schritt 9: Das eigentliche Craft CMS Update ausführen.
       - name: 🔁 Run PHP Craft Update
-        run: php craft update all --interactive=0
         working-directory: ./mein-test-projekt
+        env:
+          DB_DRIVER: mysql
+          DB_SERVER: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          DB_USER: ${{ secrets.MYSQL_USER }}
+          DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
+          run: php craft update all --interactive=0
+
       
       # Schritt 10: Git konfigurieren.
       - name: 📝 Configure Git
