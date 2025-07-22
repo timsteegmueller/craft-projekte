@@ -66,6 +66,30 @@ jobs:
       - name: 🔁 Run PHP Craft Update
         run: php craft update all
         working-directory: ./mein-test-projekt
+
+ - name: 📝 Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: ✨ Create New Branch and Commit Changes
+        run: |
+          # Den neuen Branch-Namen erstellen, z.B. "updates/2023-10-27"
+          NEW_BRANCH="updates/$(date +%Y-%m-%d)"
+          git checkout -b $NEW_BRANCH
+          
+          # Prüfen, ob es Änderungen gibt (wichtig, damit der Workflow nicht fehlschlägt, wenn keine Updates da waren)
+          if [[ -n $(git status -s) ]]; then
+            echo "Änderungen gefunden, committe composer.lock..."
+            git add ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json
+            git commit -m "chore: Automatisierte Craft CMS Updates"
+            git push --set-upstream origin $NEW_BRANCH
+          else
+            echo "Keine neuen Updates gefunden."
+          fi
+        env:
+          # Token wird für den Push-Befehl benötigt
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       # n8n (oder anderen Service) benachrichtigen, dass der Job fertig ist
       # Praktisch für weitere Automatisierung oder Monitoring
