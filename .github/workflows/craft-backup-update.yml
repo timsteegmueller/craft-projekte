@@ -1,52 +1,42 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.5 - Final)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.7 - Dynamic .env)
 # ====================================================================================
 #  Diese GitHub Action führt die Kernlogik des Update-Prozesses aus.
-#  Sie wird extern durch einen `repository_dispatch`-Event (z.B. von n8n) ausgelöst.
 #
 #  Workflow-Schritte:
 #  1. Startet einen temporären MySQL-Datenbank-Service.
 #  2. Checkt den Code des Repositories aus.
-#  3. Richtet eine PHP-Umgebung mit allen nötigen Erweiterungen ein.
-#  4. Installiert die Composer-Abhängigkeiten.
-#  5. Überprüft aktiv, ob die Datenbankverbindung steht.
-#  6. Erstellt ein Sicherheits-Backup der Datenbank.
-#  7. Führt das `php craft update all` Kommando aus.
-#  8. Prüft auf Änderungen und committet diese in einen neuen Branch.
-#  9. Pusht den neuen Branch ins Repository.
+#  3. Richtet eine PHP-Umgebung ein.
+#  4. NEU: Erstellt eine dynamische .env Datei mit den DB-Secrets für den Runner.
+#  5. Installiert die Composer-Abhängigkeiten.
+#  6. Überprüft aktiv die Datenbankverbindung.
+#  7. Erstellt ein Sicherheits-Backup.
+#  8. Führt das `php craft update all` Kommando aus.
+#  9. Committet Änderungen in einen neuen Branch und pusht diesen.
 # ====================================================================================
 
 name: 💾 CraftCMS Auto Backup & Update
 
 on:
   repository_dispatch:
-    # Lauscht ausschließlich auf externe Trigger mit diesem spezifischen Event-Typ.
     types: [run-backup-und-update]
 
 jobs:
   craft-auto-update:
-    # Läuft auf dem neuesten Ubuntu-Runner, was kosteneffizient und performant ist.
     runs-on: ubuntu-latest
-    
-    # Hier werden die Berechtigungen für den GITHUB_TOKEN für DIESEN Job festgelegt.
     permissions:
-      # Schreibrechte für den Inhalt sind für den 'git push' Befehl erforderlich.
       contents: write
     
     services:
-      # Startet einen dedizierten MySQL-Container nur für diesen Job.
       mysql:
         image: mysql:5.7
         env:
-          # Lädt die Datenbank-Zugangsdaten sicher aus den Repository Secrets.
           MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
           MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
         ports:
-          # Mappt den Container-Port auf den Host, damit PHP darauf zugreifen kann.
           - 3306:3306
-        # Docker-Optionen für den Service-Container.
         options: >-
           --health-cmd="mysqladmin ping --silent"
           --health-interval=10s
@@ -58,7 +48,7 @@ jobs:
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
 
-      # Schritt 2: PHP-Umgebung mit allen für Craft CMS nötigen Erweiterungen einrichten.
+      # Schritt 2: PHP-Umgebung einrichten.
       - name: 📦 Set up PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -66,61 +56,72 @@ jobs:
           extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
+
+      # NEU: Schritt 3: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
+      - name: 📝 Create .env File
+        working-directory: ./mein-test-projekt
+        run: |
+          echo "Generiere .env-Datei für die GitHub Action..."
+          # Erstellt die .env-Datei und füllt sie mit den Zugangsdaten des Service-Containers.
+          # Craft wird diese Datei lesen, um sich mit der Datenbank zu verbinden.
+          echo "DB_DRIVER=mysql" > .env
+          echo "DB_SERVER=127.0.0.1" >> .env
+          echo "DB_PORT=3306" >> .env
+          echo "DB_DATABASE=${{ secrets.MYSQL_DATABASE }}" >> .env
+          echo "DB_USER=${{ secrets.MYSQL_USER }}" >> .env
+          echo "DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
+          # Ein gültiger Security Key ist für viele Craft-Befehle erforderlich.
+          echo "SECURITY_KEY=$(openssl rand -base64 32)" >> .env
+          echo "ENVIRONMENT=dev" >> .env
       
-      # Schritt 3: Composer-Abhängigkeiten installieren.
+      # Schritt 4: Composer-Abhängigkeiten installieren.
       - name: 🧰 Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: ./mein-test-projekt
       
-      # Schritt 4: Explizit auf die Datenbankverbindung warten und diese prüfen.
+      # Schritt 5: Datenbankverbindung prüfen.
       - name: 🩺 Verify MySQL Connection
         env:
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
           echo "Warte auf die Datenbank..."
-          # Diese Schleife versucht 15 Sekunden lang, eine Verbindung herzustellen.
           for i in {1..15}; do
-            if mysql -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -e "SELECT 1" &> /dev/null; then
+            if mysql -h 127.0.0.1 -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "SELECT 1" &> /dev/null; then
               echo "Datenbankverbindung erfolgreich hergestellt!"
               break
             fi
             echo "Warte auf die MySQL-Datenbank... (Versuch $i)"
             sleep 1
           done
-          # Finaler Status-Check. Wenn dieser fehlschlägt, bricht der Workflow hier ab.
-          mysqladmin -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" status
+          mysqladmin -h 127.0.0.1 -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" status
 
-      # Schritt 5: Datenbank-Backup erstellen.
+      # Schritt 6: Datenbank-Backup erstellen.
       - name: 💾 Backup Database
         env:
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          # Die sicherste Methode: `mysqldump` liest das Passwort aus dieser Umgebungsvariable.
           MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
           MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         run: |
           mkdir -p ./backups
-          # Die `mysqldump`-Syntax ist jetzt sauber und sicher.
           mysqldump --column-statistics=0 -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" > ./backups/backup_$(date +%Y-%m-%d).sql
         working-directory: ./mein-test-projekt
       
-      # Schritt 6: Das eigentliche Craft CMS Update via CLI ausführen.
+      # Schritt 7: Das eigentliche Craft CMS Update ausführen.
       - name: 🔁 Run PHP Craft Update
-        run: php craft update all
+        run: php craft update all --interactive=0
         working-directory: ./mein-test-projekt
       
-      # Schritt 7: Git konfigurieren, um Commits durchzuführen.
+      # Schritt 8: Git konfigurieren.
       - name: 📝 Configure Git
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
       
-      # Schritt 8: Änderungen in einen neuen Branch committen und pushen.
+      # Schritt 9: Änderungen committen und pushen.
       - name: ✨ Create Branch, Commit and Push Changes
         id: commit_push
         run: |
-          # Prüft, ob es überhaupt Änderungen gibt, um leere Commits zu vermeiden.
           if git diff --quiet --exit-code ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json; then
             echo "Keine neuen Updates gefunden. Der Prozess wird hier beendet."
             echo "changes_pushed=false" >> $GITHUB_OUTPUT
@@ -130,15 +131,13 @@ jobs:
             git checkout -b $NEW_BRANCH
             git add ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json
             git commit -m "chore(deps): 🤖 Automatisierte Craft CMS & Plugin Updates"
-            # Pusht den neuen Branch ins Repository.
             git push --set-upstream origin $NEW_BRANCH
             echo "changes_pushed=true" >> $GITHUB_OUTPUT
             echo "branch_name=$NEW_BRANCH" >> $GITHUB_OUTPUT
           fi
         env:
-          # Verwendet den sicheren, integrierten GITHUB_TOKEN für den Push.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      # Schritt 9: Erfolgsmeldung im Action-Log.
+      # Schritt 10: Erfolgsmeldung im Log.
       - name: ✅ Done
         run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
