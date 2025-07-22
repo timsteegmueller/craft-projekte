@@ -1,0 +1,115 @@
+# ====================================================================================
+#  💾 CraftCMS Auto Backup & Update Workflow
+# ====================================================================================
+#  Diese GitHub Action führt die Kernlogik des Update-Prozesses aus.
+#  Sie wird extern durch einen `repository_dispatch`-Event (z.B. von n8n) ausgelöst.
+#
+#  Workflow-Schritte:
+#  1. Startet einen temporären MySQL-Datenbank-Service.
+#  2. Checkt den Code des Repositories aus.
+#  3. Richtet eine PHP-Umgebung mit allen nötigen Erweiterungen ein.
+#  4. Installiert die Composer-Abhängigkeiten.
+#  5. Erstellt ein Sicherheits-Backup der Datenbank.
+#  6. Führt das `php craft update all` Kommando aus.
+#  7. Prüft auf Änderungen (composer.lock) und committet diese in einen neuen Branch.
+#  8. Pusht den neuen Branch ins Repository, bereit für einen Pull Request.
+# ====================================================================================
+
+name: 💾 CraftCMS Auto Backup & Update
+
+on:
+  repository_dispatch:
+    # Lauscht ausschließlich auf externe Trigger mit diesem spezifischen Event-Typ.
+    types: [run-backup-und-update]
+
+jobs:
+  craft-auto-update:
+    # Läuft auf dem neuesten Ubuntu-Runner, was kosteneffizient und performant ist.
+    runs-on: ubuntu-latest
+    
+    services:
+      # Startet einen dedizierten MySQL-Container nur für diesen Job.
+      mysql:
+        image: mysql:5.7
+        env:
+          # Lädt die Datenbank-Zugangsdaten sicher aus den Repository Secrets.
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+        ports:
+          # Mappt den Container-Port auf den Host, damit PHP darauf zugreifen kann.
+          - 3306:3306
+        options: >-
+          # Ein Health-Check stellt sicher, dass der Workflow erst fortfährt, wenn die DB voll einsatzbereit ist.
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+    
+    steps:
+      # Schritt 1: Code des Repositories in den Runner laden.
+      - name: 📥 Checkout Repo
+        uses: actions/checkout@v4 # Immer die neueste stabile Version verwenden
+      
+      # Schritt 2: PHP-Umgebung mit allen für Craft CMS nötigen Erweiterungen einrichten.
+      - name: 📦 Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
+          ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
+          coverage: none
+      
+      # Schritt 3: Composer-Abhängigkeiten installieren, basierend auf der composer.lock.
+      - name: 🧰 Install Composer Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
+        working-directory: ./mein-test-projekt
+      
+      # Schritt 4: Ein Datenbank-Backup als Sicherheitsmaßnahme erstellen.
+      - name: 💾 Backup Database
+        run: |
+          mkdir -p ./backups
+          # Verwendet die Credentials aus den Secrets für den mysqldump.
+          mysqldump -h 127.0.0.1 -u${{ secrets.MYSQL_USER }} -p${{ secrets.MYSQL_PASSWORD }} ${{ secrets.MYSQL_DATABASE }} > ./backups/backup_$(date +%Y-%m-%d).sql
+        working-directory: ./mein-test-projekt
+      
+      # Schritt 5: Das eigentliche Craft CMS Update via CLI ausführen.
+      - name: 🔁 Run PHP Craft Update
+        run: php craft update all
+        working-directory: ./mein-test-projekt
+      
+      # Schritt 6: Git konfigurieren, um Commits im Namen der Action durchführen zu können.
+      - name: 📝 Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+      
+      # Schritt 7: Änderungen in einen neuen Branch committen und pushen.
+      - name: ✨ Create Branch, Commit and Push Changes
+        id: commit_push
+        run: |
+          # Prüft, ob es überhaupt Änderungen gibt, um leere Commits zu vermeiden.
+          if git diff --quiet --exit-code ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json; then
+            echo "Keine neuen Updates gefunden. Der Prozess wird hier beendet."
+            # Setzt einen Output, falls n8n darauf reagieren soll.
+            echo "changes_pushed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Änderungen in composer-Dateien gefunden. Erstelle neuen Branch..."
+            NEW_BRANCH="updates/automated-craft-updates-$(date +%Y-%m-%d)"
+            git checkout -b $NEW_BRANCH
+            git add ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json
+            git commit -m "chore(deps): 🤖 Automatisierte Craft CMS & Plugin Updates"
+            # Pusht den neuen Branch ins Repository. Verwendet den sicheren, integrierten GITHUB_TOKEN.
+            git push --set-upstream origin $NEW_BRANCH
+            echo "changes_pushed=true" >> $GITHUB_OUTPUT
+            echo "branch_name=$NEW_BRANCH" >> $GITHUB_OUTPUT
+          fi
+        # Der GITHUB_TOKEN wird hier sicher für die Authentifizierung beim Push verwendet.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      # Schritt 8: Erfolgsmeldung im Action-Log für die Nachverfolgung.
+      - name: ✅ Done
+        run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
