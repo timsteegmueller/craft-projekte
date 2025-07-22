@@ -1,5 +1,5 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.5 - Final Syntax Fix)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.5 - Final)
 # ====================================================================================
 #  Diese GitHub Action führt die Kernlogik des Update-Prozesses aus.
 #  Sie wird extern durch einen `repository_dispatch`-Event (z.B. von n8n) ausgelöst.
@@ -28,7 +28,7 @@ jobs:
     # Läuft auf dem neuesten Ubuntu-Runner, was kosteneffizient und performant ist.
     runs-on: ubuntu-latest
     
-    # Hier werden die Berechtigungen für den GITHUB_TOKEN für DIESEN Job festgelegt.
+    # HIER WERDEN DIE BERECHTIGUNGEN FÜR DAS AUTOMATISCHE GITHUB_TOKEN FESTGELEGT
     permissions:
       # Schreibrechte für den Inhalt sind für den 'git push' Befehl erforderlich.
       contents: write
@@ -80,6 +80,7 @@ jobs:
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
           echo "Warte auf die Datenbank..."
+          # Diese Schleife versucht 15 Sekunden lang, eine Verbindung herzustellen.
           for i in {1..15}; do
             if mysql -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -e "SELECT 1" &> /dev/null; then
               echo "Datenbankverbindung erfolgreich hergestellt!"
@@ -88,16 +89,19 @@ jobs:
             echo "Warte auf die MySQL-Datenbank... (Versuch $i)"
             sleep 1
           done
+          # Finaler Status-Check. Wenn dieser fehlschlägt, bricht der Workflow hier ab.
           mysqladmin -h 127.0.0.1 -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" status
 
       # Schritt 5: Datenbank-Backup erstellen.
       - name: 💾 Backup Database
         env:
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
+          # Die sicherste Methode: `mysqldump` liest das Passwort aus dieser Umgebungsvariable.
           MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
           MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         run: |
           mkdir -p ./backups
+          # Die `mysqldump`-Syntax ist jetzt sauber und sicher.
           mysqldump --column-statistics=0 -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" > ./backups/backup_$(date +%Y-%m-%d).sql
         working-directory: ./mein-test-projekt
       
@@ -116,6 +120,7 @@ jobs:
       - name: ✨ Create Branch, Commit and Push Changes
         id: commit_push
         run: |
+          # Prüft, ob es überhaupt Änderungen gibt, um leere Commits zu vermeiden.
           if git diff --quiet --exit-code ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json; then
             echo "Keine neuen Updates gefunden. Der Prozess wird hier beendet."
             echo "changes_pushed=false" >> $GITHUB_OUTPUT
@@ -125,6 +130,7 @@ jobs:
             git checkout -b $NEW_BRANCH
             git add ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json
             git commit -m "chore(deps): 🤖 Automatisierte Craft CMS & Plugin Updates"
+            # Pusht den neuen Branch ins Repository.
             git push --set-upstream origin $NEW_BRANCH
             echo "changes_pushed=true" >> $GITHUB_OUTPUT
             echo "branch_name=$NEW_BRANCH" >> $GITHUB_OUTPUT
