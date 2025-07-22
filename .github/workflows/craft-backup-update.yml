@@ -1,4 +1,4 @@
-name: 💾 Composer Dependencies Update
+name: 💾 Update Composer Dependencies
 
 on:
   repository_dispatch:
@@ -20,81 +20,35 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
+          extensions: mbstring, intl, zip
           coverage: none
 
-      - name: Patch bootstrap.php in mein-test-projekt
+      - name: Find Project Directory
+        id: find-dir
         run: |
-          # Diese Datei bereitet uns Probleme - patchen wir sie
-          if [ -f "mein-test-projekt/bootstrap.php" ]; then
-            echo "Patching bootstrap.php..."
-            cp mein-test-projekt/bootstrap.php mein-test-projekt/bootstrap.php.bak
-            
-            # Erstelle eine gepatchte Version, die ohne autoload.php funktioniert
-            cat > mein-test-projekt/bootstrap.php <<'EOF'
-            <?php
-            // Gepatchte bootstrap.php ohne Abhängigkeit zu autoload.php
-            
-            // Definiere Konstanten
-            define('CRAFT_BASE_PATH', __DIR__);
-            define('CRAFT_VENDOR_PATH', CRAFT_BASE_PATH . '/vendor');
-            
-            // Simuliere Autoloader-Funktionalität
-            spl_autoload_register(function($class) {
-                echo "Notice: Would normally autoload $class\n";
-            });
-            
-            // Dummy-Funktionen, damit nichts crasht
-            if (!function_exists('craft\helpers\App')) {
-                function App() {
-                    return new class {
-                        public function getEnv($var) { return null; }
-                    };
-                }
-            }
-            
-            echo "Using patched bootstrap without autoloader requirements\n";
-            EOF
-            
-            echo "bootstrap.php erfolgreich gepatcht"
-          fi
-
-      - name: Run Composer in Project Directory
-        id: composer-update
-        run: |
-          # Projekt-Verzeichnis
-          if [ -d "mein-test-projekt" ]; then
+          # Prüfe ob mein-test-projekt existiert
+          if [ -d "mein-test-projekt" ] && [ -f "mein-test-projekt/composer.json" ]; then
             PROJECT_DIR="mein-test-projekt"
           else
-            # Finde das erste Verzeichnis mit einer composer.json
-            PROJECT_DIR=$(find . -name "composer.json" -not -path "*/vendor/*" | head -n 1 | xargs dirname)
-            
-            # Fallback auf Root-Verzeichnis
-            if [ -z "$PROJECT_DIR" ]; then
-              PROJECT_DIR="."
-            fi
+            # Finde erstes Verzeichnis mit composer.json
+            PROJECT_DIR=$(find . -name "composer.json" -not -path "*/vendor/*" | head -n 1 | xargs dirname || echo ".")
           fi
           
           echo "Verwende Projekt-Verzeichnis: $PROJECT_DIR"
-          cd "$PROJECT_DIR"
-          
-          # Composer-Status prüfen
-          echo "Composer-Status:"
-          composer --version
-          
-          # composer.json anzeigen
-          echo "composer.json Inhalt:"
-          cat composer.json
-          
-          # Composer-Update ausführen
-          echo "Führe composer update aus..."
-          composer update --no-interaction || echo "composer update fehlgeschlagen, fahre trotzdem fort"
-          
-          # Speichere das Verzeichnis für spätere Schritte
           echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+
+      - name: Direct Composer Update
+        working-directory: ${{ steps.find-dir.outputs.project_dir }}
+        run: |
+          echo "=== Working in $(pwd) ==="
           
-          # Zeige Änderungen
-          git status
+          # Speichere die original composer.json/lock
+          cp composer.json composer.json.original || true
+          cp composer.lock composer.lock.original || true
+          
+          # Führe Composer Update durch
+          echo "=== Running composer update ==="
+          composer update --no-scripts --no-interaction
 
       - name: Configure Git
         run: |
@@ -105,31 +59,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Branch-Name
-          BRANCH_NAME="updates/dependencies-$(date +'%Y-%m-%d')"
-          echo "Erstelle Branch: $BRANCH_NAME"
+          # Erzeuge einen eindeutigen Branch-Namen
+          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
+          BRANCH_NAME="update/composer-$TIMESTAMP"
           
-          # Branch erstellen
+          # Erstelle einen neuen Branch
           git checkout -b "$BRANCH_NAME"
           
-          # Änderungen hinzufügen
-          PROJECT_DIR="${{ steps.composer-update.outputs.project_dir }}"
-          git add "$PROJECT_DIR/composer.json" "$PROJECT_DIR/composer.lock" || echo "Keine Änderungen gefunden"
+          # Füge die geänderten Dateien hinzu
+          PROJECT_DIR="${{ steps.find-dir.outputs.project_dir }}"
+          git add "$PROJECT_DIR/composer.json" "$PROJECT_DIR/composer.lock" || true
           
-          # Falls die bootstrap.php gepatcht wurde, diese auch hinzufügen
-          if [ -f "$PROJECT_DIR/bootstrap.php" ] && [ -f "$PROJECT_DIR/bootstrap.php.bak" ]; then
-            echo "bootstrap.php wurde gepatcht, Änderungen werden rückgängig gemacht"
-            mv "$PROJECT_DIR/bootstrap.php.bak" "$PROJECT_DIR/bootstrap.php"
-          fi
+          # Erstelle einen Commit, auch wenn leer
+          git commit -m "Update composer dependencies" || git commit --allow-empty -m "Dependency update (no changes)"
           
-          # Commit erstellen
-          git commit -m "chore(deps): Composer-Abhängigkeiten aktualisiert" || echo "Keine Änderungen zum Committen"
-          
-          # Leeren Commit erstellen
-          git commit --allow-empty -m "chore: Workflow-Test"
-          
-          # Branch pushen
+          # Push den Branch
           git push --set-upstream origin "$BRANCH_NAME"
-          echo "Branch erfolgreich gepusht: $BRANCH_NAME"
           
-          echo "::notice::Branch $BRANCH_NAME wurde erstellt und gepusht. Erstellen Sie jetzt einen PR über die GitHub-Oberfläche oder über Ihren n8n-Workflow."
+          echo "::notice::Branch $BRANCH_NAME wurde erstellt und gepusht"
