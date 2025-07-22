@@ -1,20 +1,20 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.8 - Final)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.9 - Final mit Debugging)
 # ====================================================================================
 #  Diese GitHub Action führt die Kernlogik des Update-Prozesses aus.
-#  Sie wird extern durch einen `repository_dispatch`-Event (z.B. von n8n) ausgelöst.
 #
 #  Workflow-Schritte:
 #  1. Startet einen temporären MySQL-Datenbank-Service.
 #  2. Checkt den Code des Repositories aus.
 #  3. Richtet eine PHP-Umgebung ein.
-#  4. Stellt sicher, dass eine composer.lock-Datei vorhanden ist (Best Practice).
-#  5. Installiert die Composer-Abhängigkeiten (muss VOR der .env-Erstellung laufen).
+#  4. Installiert die Composer-Abhängigkeiten (muss VOR der .env-Erstellung laufen).
+#  5. DEBUG: Zeigt den Verzeichnisinhalt NACH Composer an.
 #  6. Erstellt eine dynamische .env Datei mit den korrekten DB-Secrets für diesen Lauf.
-#  7. Überprüft aktiv die Datenbankverbindung.
-#  8. Erstellt ein Sicherheits-Backup (mit --no-tablespaces Flag).
-#  9. Führt das `php craft update all` Kommando aus.
-#  10. Committet Änderungen in einen neuen Branch und pusht diesen.
+#  7. DEBUG: Zeigt den Inhalt der erstellten .env-Datei an.
+#  8. Überprüft aktiv die Datenbankverbindung.
+#  9. Erstellt ein Sicherheits-Backup.
+#  10. Führt das `php craft update all` Kommando aus.
+#  11. Committet Änderungen in einen neuen Branch und pusht diesen.
 # ====================================================================================
 
 name: 💾 CraftCMS Auto Backup & Update
@@ -66,22 +66,23 @@ jobs:
             echo "Fehler: Die Datei composer.lock wurde nicht im Repository gefunden. Ein deterministisches Update ist nicht möglich."
             exit 1
           fi
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: .
 
       # Schritt 4: Composer-Abhängigkeiten installieren.
-      # Dieser Schritt muss VOR dem Erstellen der .env-Datei laufen, um ein Überschreiben zu verhindern.
       - name: 🧰 Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: ./mein-test-projekt
 
-      # Schritt 5: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
+      # NEU - Schritt 5: Debugging-Schritt, um den Zustand nach Composer zu prüfen.
+      - name: "🐛 DEBUG: List files after composer install"
+        run: ls -la
+        working-directory: ./mein-test-projekt
+
+      # Schritt 6: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
       - name: 📝 Create .env File
-        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
+        working-directory: ./mein-test-projekt
         run: |
           echo "Generiere finale .env-Datei für die GitHub Action..."
-          # Diese Datei wird jetzt NACH composer install erstellt und ist somit die finale Version.
           echo "DB_DRIVER=mysql" > .env
           echo "DB_SERVER=127.0.0.1" >> .env
           echo "DB_PORT=3306" >> .env
@@ -91,24 +92,20 @@ jobs:
           echo "SECURITY_KEY=$(openssl rand -base64 32)" >> .env
           echo "ENVIRONMENT=dev" >> .env
       
-      # Schritt 6: Datenbankverbindung prüfen.
+      # NEU - Schritt 7: Debugging-Schritt, um den Inhalt unserer .env zu verifizieren.
+      - name: "🐛 DEBUG: Show .env content"
+        run: cat .env
+        working-directory: ./mein-test-projekt
+
+      # Schritt 8: Datenbankverbindung prüfen.
       - name: 🩺 Verify MySQL Connection
         env:
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
-          echo "Warte auf die Datenbank..."
-          for i in {1..15}; do
-            if mysql -h 127.0.0.1 -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "SELECT 1" &> /dev/null; then
-              echo "Datenbankverbindung erfolgreich hergestellt!"
-              break
-            fi
-            echo "Warte auf die MySQL-Datenbank... (Versuch $i)"
-            sleep 1
-          done
           mysqladmin -h 127.0.0.1 -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" status
 
-      # Schritt 7: Datenbank-Backup erstellen.
+      # Schritt 9: Datenbank-Backup erstellen.
       - name: 💾 Backup Database
         env:
           MYSQL_USER: ${{ secrets.MYSQL_USER }}
@@ -116,22 +113,21 @@ jobs:
           MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
         run: |
           mkdir -p ./backups
-          # --no-tablespaces hinzugefügt, um den 'Access denied' Fehler bei mysqldump zu verhindern.
           mysqldump --no-tablespaces --column-statistics=0 -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" > ./backups/backup_$(date +%Y-%m-%d).sql
-        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
+        working-directory: ./mein-test-projekt
       
-      # Schritt 8: Das eigentliche Craft CMS Update ausführen.
+      # Schritt 10: Das eigentliche Craft CMS Update ausführen.
       - name: 🔁 Run PHP Craft Update
         run: php craft update all --interactive=0
-        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
+        working-directory: ./mein-test-projekt
       
-      # Schritt 9: Git konfigurieren.
+      # Schritt 11: Git konfigurieren.
       - name: 📝 Configure Git
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
       
-      # Schritt 10: Änderungen committen und pushen.
+      # Schritt 12: Änderungen committen und pushen.
       - name: ✨ Create Branch, Commit and Push Changes
         id: commit_push
         run: |
@@ -151,6 +147,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      # Schritt 11: Erfolgsmeldung im Log.
+      # Schritt 13: Erfolgsmeldung im Log.
       - name: ✅ Done
         run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
