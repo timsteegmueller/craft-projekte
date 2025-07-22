@@ -1,9 +1,6 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.0 - Final Debugging)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.0 – Final Debugging)
 # ====================================================================================
-#  Diese Version ist darauf ausgelegt, das verbleibende Datenbank-Verbindungsproblem
-#  von Craft CMS endgültig zu diagnostizieren und zu lösen.
-
 name: 💾 CraftCMS Auto Backup & Update
 
 on:
@@ -15,15 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     services:
       mysql:
         image: mysql:5.7
         env:
           MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
-          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_DATABASE:      ${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER:          ${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD:      ${{ secrets.MYSQL_PASSWORD }}
         ports:
           - 3306:3306
         options: >-
@@ -31,13 +28,11 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
-    
+
     steps:
-      # Schritt 1: Code des Repositories in den Runner laden.
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
 
-      # Schritt 2: PHP-Umgebung einrichten.
       - name: 📦 Set up PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -45,92 +40,79 @@ jobs:
           extensions: mbstring, pdo_mysql, dom, curl, intl, gd, zip, fileinfo
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
-      
-      # Schritt 3: Sicherstellen, dass eine composer.lock-Datei existiert.
+
       - name: ✅ Check for composer.lock
+        working-directory: ./mein-test-projekt/web
         run: |
-          if [ ! -f ./mein-test-projekt/composer.lock ]; then
-            echo "::error::Die Datei composer.lock wurde nicht im Repository gefunden. Ein deterministisches Update ist nicht möglich."
+          if [ ! -f composer.lock ]; then
+            echo "::error::composer.lock nicht gefunden."
             exit 1
           fi
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
-        working-directory: .
 
-      # Schritt 4: Composer-Abhängigkeiten installieren.
       - name: 🧰 Install Composer Dependencies
+        working-directory: ./mein-test-projekt/web
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
-        working-directory: ./mein-test-projekt
 
-      # Schritt 5: Debugging - Zeigt den Verzeichnisinhalt NACH Composer an.
-      - name: "🐛 DEBUG: List files after composer install"
+      - name: 🐛 DEBUG: List files after composer install
+        working-directory: ./mein-test-projekt/web
         run: ls -la
-        working-directory: ./mein-test-projekt
 
-      # Schritt 6: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
-      - name: 📝 Create .env File for Action
-        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
-        working-directory: ./mein-test-projekt
+      - name: 📝 Create .env
+        working-directory: ./mein-test-projekt/web
         run: |
-          echo "Generiere finale .env-Datei für die GitHub Action..."
-          echo "DB_DRIVER=mysql" > .env
-          echo "DB_SERVER=127.0.0.1" >> .env
-          echo "DB_PORT=3306" >> .env
+          echo "DB_DRIVER=mysql"       > .env
+          echo "DB_SERVER=127.0.0.1"   >> .env
+          echo "DB_PORT=3306"          >> .env
           echo "DB_DATABASE=${{ secrets.MYSQL_DATABASE }}" >> .env
-          echo "DB_USER=${{ secrets.MYSQL_USER }}" >> .env
+          echo "DB_USER=${{ secrets.MYSQL_USER }}"         >> .env
           echo "DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
-          echo "SECURITY_KEY=$(openssl rand -base64 32)" >> .env
-          echo "ENVIRONMENT=dev" >> .env
-      
-      # Schritt 7: Debugging - Zeigt den Inhalt der erstellten .env-Datei an.
-      - name: "🐛 DEBUG: Show .env content"
+          echo "SECURITY_KEY=${{ secrets.SECURITY_KEY }}"   >> .env
+          echo "ENVIRONMENT=dev"       >> .env
+
+      - name: 🐛 DEBUG: Show .env content
+        working-directory: ./mein-test-projekt/web
         run: cat .env
-        working-directory: ./mein-test-projekt
-      
-      # Schritt 8: Datenbankverbindung mit Craft selbst testen.
-      - name: "🧪 Test Craft DB Connection"
-        run: php craft setup/db-creds --interactive=0
-        working-directory: ./mein-test-projekt
+
+      - name: 🧪 Test Craft DB Connection
+        working-directory: ./mein-test-projekt/web
+        run: php vendor/bin/craft setup/db-creds --interactive=0
 
       - name: 🔁 Run PHP Craft Update
-        working-directory: ./mein-test-projekt
+        working-directory: ./mein-test-projekt/web
         env:
-          DB_DRIVER: mysql
-          DB_SERVER: 127.0.0.1
-          DB_PORT: 3306
-          DB_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-          DB_USER: ${{ secrets.MYSQL_USER }}
-          DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          DB_DRIVER:       mysql
+          DB_SERVER:       127.0.0.1
+          DB_PORT:         3306
+          DB_DATABASE:     ${{ secrets.MYSQL_DATABASE }}
+          DB_USER:         ${{ secrets.MYSQL_USER }}
+          DB_PASSWORD:     ${{ secrets.MYSQL_PASSWORD }}
+          SECURITY_KEY:    ${{ secrets.SECURITY_KEY }}
           CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
-          run: php craft update all --interactive=0
+        run: php vendor/bin/craft update all --interactive=0
 
-      
-      # Schritt 10: Git konfigurieren.
       - name: 📝 Configure Git
         run: |
-          git config --global user.name 'github-actions[bot]'
+          git config --global user.name  'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-      
-      # Schritt 11: Änderungen committen und pushen.
+
       - name: ✨ Create Branch, Commit and Push Changes
         id: commit_push
         run: |
-          if git diff --quiet --exit-code ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json; then
-            echo "Keine neuen Updates gefunden. Der Prozess wird hier beendet."
+          if git diff --quiet --exit-code composer.lock composer.json; then
+            echo "Keine neuen Updates."
             echo "changes_pushed=false" >> $GITHUB_OUTPUT
           else
-            echo "Änderungen in composer-Dateien gefunden. Erstelle neuen Branch..."
-            NEW_BRANCH="updates/automated-craft-updates-$(date +%Y-%m-%d)"
-            git checkout -b $NEW_BRANCH
-            git add ./mein-test-projekt/composer.lock ./mein-test-projekt/composer.json
+            BRANCH="updates/automated-craft-updates-$(date +%Y-%m-%d)"
+            git checkout -b $BRANCH
+            git add composer.lock composer.json
             git commit -m "chore(deps): 🤖 Automatisierte Craft CMS & Plugin Updates"
-            git push --set-upstream origin $NEW_BRANCH
-            echo "changes_pushed=true" >> $GITHUB_OUTPUT
-            echo "branch_name=$NEW_BRANCH" >> $GITHUB_OUTPUT
+            git push --set-upstream origin $BRANCH
+            echo "changes_pushed=true"  >> $GITHUB_OUTPUT
+            echo "branch_name=$BRANCH" >> $GITHUB_OUTPUT
           fi
+        working-directory: ./mein-test-projekt/web
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      # Schritt 12: Erfolgsmeldung im Log.
+
       - name: ✅ Done
         run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
