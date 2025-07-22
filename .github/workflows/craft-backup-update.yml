@@ -1,21 +1,8 @@
 # ====================================================================================
-#  💾 CraftCMS Auto Backup & Update Workflow (Version 1.9 - Final mit Debugging)
+#  💾 CraftCMS Auto Backup & Update Workflow (Version 2.0 - Final Debugging)
 # ====================================================================================
-#  Diese GitHub Action führt die Kernlogik des Update-Prozesses aus.
-#
-#  Workflow-Schritte:
-#  1. Startet einen temporären MySQL-Datenbank-Service.
-#  2. Checkt den Code des Repositories aus.
-#  3. Richtet eine PHP-Umgebung ein.
-#  4. Installiert die Composer-Abhängigkeiten (muss VOR der .env-Erstellung laufen).
-#  5. DEBUG: Zeigt den Verzeichnisinhalt NACH Composer an.
-#  6. Erstellt eine dynamische .env Datei mit den korrekten DB-Secrets für diesen Lauf.
-#  7. DEBUG: Zeigt den Inhalt der erstellten .env-Datei an.
-#  8. Überprüft aktiv die Datenbankverbindung.
-#  9. Erstellt ein Sicherheits-Backup.
-#  10. Führt das `php craft update all` Kommando aus.
-#  11. Committet Änderungen in einen neuen Branch und pusht diesen.
-# ====================================================================================
+#  Diese Version ist darauf ausgelegt, das verbleibende Datenbank-Verbindungsproblem
+#  von Craft CMS endgültig zu diagnostizieren und zu lösen.
 
 name: 💾 CraftCMS Auto Backup & Update
 
@@ -63,23 +50,26 @@ jobs:
       - name: ✅ Check for composer.lock
         run: |
           if [ ! -f ./mein-test-projekt/composer.lock ]; then
-            echo "Fehler: Die Datei composer.lock wurde nicht im Repository gefunden. Ein deterministisches Update ist nicht möglich."
+            echo "::error::Die Datei composer.lock wurde nicht im Repository gefunden. Ein deterministisches Update ist nicht möglich."
             exit 1
           fi
+        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: .
 
       # Schritt 4: Composer-Abhängigkeiten installieren.
       - name: 🧰 Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
+        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: ./mein-test-projekt
 
-      # NEU - Schritt 5: Debugging-Schritt, um den Zustand nach Composer zu prüfen.
+      # Schritt 5: Debugging - Zeigt den Verzeichnisinhalt NACH Composer an.
       - name: "🐛 DEBUG: List files after composer install"
         run: ls -la
         working-directory: ./mein-test-projekt
 
       # Schritt 6: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
-      - name: 📝 Create .env File
+      - name: 📝 Create .env File for Action
+        # WICHTIG: Passe diesen Pfad an die Struktur deines Projekts an.
         working-directory: ./mein-test-projekt
         run: |
           echo "Generiere finale .env-Datei für die GitHub Action..."
@@ -92,42 +82,28 @@ jobs:
           echo "SECURITY_KEY=$(openssl rand -base64 32)" >> .env
           echo "ENVIRONMENT=dev" >> .env
       
-      # NEU - Schritt 7: Debugging-Schritt, um den Inhalt unserer .env zu verifizieren.
+      # Schritt 7: Debugging - Zeigt den Inhalt der erstellten .env-Datei an.
       - name: "🐛 DEBUG: Show .env content"
         run: cat .env
         working-directory: ./mein-test-projekt
-
-      # Schritt 8: Datenbankverbindung prüfen.
-      - name: 🩺 Verify MySQL Connection
-        env:
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
-        run: |
-          mysqladmin -h 127.0.0.1 -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" status
-
-      # Schritt 9: Datenbank-Backup erstellen.
-      - name: 💾 Backup Database
-        env:
-          MYSQL_USER: ${{ secrets.MYSQL_USER }}
-          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
-          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-        run: |
-          mkdir -p ./backups
-          mysqldump --no-tablespaces --column-statistics=0 -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" > ./backups/backup_$(date +%Y-%m-%d).sql
-        working-directory: ./mein-test-projekt
       
-      # Schritt 10: Das eigentliche Craft CMS Update ausführen.
+      # Schritt 8: Datenbankverbindung mit Craft selbst testen.
+      - name: "🧪 Test Craft DB Connection"
+        run: php craft setup/db-creds --interactive=0
+        working-directory: ./mein-test-projekt
+
+      # Schritt 9: Das eigentliche Craft CMS Update ausführen.
       - name: 🔁 Run PHP Craft Update
         run: php craft update all --interactive=0
         working-directory: ./mein-test-projekt
       
-      # Schritt 11: Git konfigurieren.
+      # Schritt 10: Git konfigurieren.
       - name: 📝 Configure Git
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
       
-      # Schritt 12: Änderungen committen und pushen.
+      # Schritt 11: Änderungen committen und pushen.
       - name: ✨ Create Branch, Commit and Push Changes
         id: commit_push
         run: |
@@ -147,6 +123,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      # Schritt 13: Erfolgsmeldung im Log.
+      # Schritt 12: Erfolgsmeldung im Log.
       - name: ✅ Done
         run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
