@@ -7,7 +7,7 @@
 #  1. Startet einen temporären MySQL-Datenbank-Service.
 #  2. Checkt den Code des Repositories aus.
 #  3. Richtet eine PHP-Umgebung ein.
-#  4. NEU: Erstellt eine dynamische .env Datei mit den DB-Secrets für den Runner.
+#  4. Erstellt eine dynamische .env Datei mit den DB-Secrets für den Runner.
 #  5. Installiert die Composer-Abhängigkeiten.
 #  6. Überprüft aktiv die Datenbankverbindung.
 #  7. Erstellt ein Sicherheits-Backup.
@@ -57,27 +57,24 @@ jobs:
           ini-values: memory_limit=512M, post_max_size=64M, upload_max_filesize=64M
           coverage: none
 
-      # NEU: Schritt 3: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
+      # Schritt 3: Dynamische .env-Datei für die Workflow-Umgebung erstellen.
       - name: 📝 Create .env File
-        working-directory: ./mein-test-projekt
+        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
         run: |
           echo "Generiere .env-Datei für die GitHub Action..."
-          # Erstellt die .env-Datei und füllt sie mit den Zugangsdaten des Service-Containers.
-          # Craft wird diese Datei lesen, um sich mit der Datenbank zu verbinden.
           echo "DB_DRIVER=mysql" > .env
           echo "DB_SERVER=127.0.0.1" >> .env
           echo "DB_PORT=3306" >> .env
           echo "DB_DATABASE=${{ secrets.MYSQL_DATABASE }}" >> .env
           echo "DB_USER=${{ secrets.MYSQL_USER }}" >> .env
           echo "DB_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
-          # Ein gültiger Security Key ist für viele Craft-Befehle erforderlich.
           echo "SECURITY_KEY=$(openssl rand -base64 32)" >> .env
           echo "ENVIRONMENT=dev" >> .env
       
       # Schritt 4: Composer-Abhängigkeiten installieren.
       - name: 🧰 Install Composer Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
-        working-directory: ./mein-test-projekt
+        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
       
       # Schritt 5: Datenbankverbindung prüfen.
       - name: 🩺 Verify MySQL Connection
@@ -105,12 +102,12 @@ jobs:
         run: |
           mkdir -p ./backups
           mysqldump --column-statistics=0 -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" > ./backups/backup_$(date +%Y-%m-%d).sql
-        working-directory: ./mein-test-projekt
+        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
       
       # Schritt 7: Das eigentliche Craft CMS Update ausführen.
       - name: 🔁 Run PHP Craft Update
         run: php craft update all --interactive=0
-        working-directory: ./mein-test-projekt
+        working-directory: ./mein-test-projekt # WICHTIG: Pfad anpassen!
       
       # Schritt 8: Git konfigurieren.
       - name: 📝 Configure Git
@@ -140,4 +137,219 @@ jobs:
       
       # Schritt 10: Erfolgsmeldung im Log.
       - name: ✅ Done
-        run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"
+        run: echo "Backup- und Update-Prozess erfolgreich abgeschlossen!"```
+
+### 4. n8n Workflow importieren & konfigurieren
+
+1.  **Credentials in n8n anlegen:**
+    -   **GitHub API:** Erstelle eine "GitHub API"-Credential mit einem [Personal Access Token (PAT)](https://github.com/settings/tokens). Der Token benötigt mindestens die Scopes `repo` und `workflow`.
+    -   **Slack Webhook:** Lege eine "Slack Webhook"-Credential an oder speichere die Webhook-URL in den n8n-Secrets.
+
+2.  **Workflow importieren:** Importiere den folgenden JSON-Code in deine n8n-Instanz.
+
+```json
+{
+  "name": "Craft CMS Updater",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtHour": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        100
+      ],
+      "name": "⏰ Weekly Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const repo = 'craft-projekte';\nconst owner = 'timsteegmueller';\n\nreturn [{ \n  json: { \n    repo: repo,\n    owner: owner,\n    source: 'weekly-schedule',\n    full_name: `${owner}/${repo}`\n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        100
+      ],
+      "name": "📋 GitHub Config"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"run-backup-und-update\"\n}\n"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        100
+      ],
+      "name": "🚀 Trigger GitHub Action",
+      "credentials": {
+        "githubApi": {
+          "id": "YOUR_GITHUB_CREDENTIAL_ID",
+          "name": "GitHub API Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/actions/runs?event=repository_dispatch",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        100
+      ],
+      "name": "📊 Check Action Status",
+      "credentials": {
+        "githubApi": {
+          "id": "YOUR_GITHUB_CREDENTIAL_ID",
+          "name": "GitHub API Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.workflow_runs[0].status }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "completed"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        100
+      ],
+      "name": "✅ Action Complete?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.workflow_runs[0].conclusion }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "success"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        100
+      ],
+      "name": "🎉 Success?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/pulls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": \"🤖 Automatisierte Craft CMS Updates\",\n  \"head\": \"updates/automated-craft-updates-{{ $now.toFormat('yyyy-MM-dd') }}\",\n  \"base\": \"main\",\n  \"body\": \"## 🚀 Automatisches Craft CMS Update\\n\\n**Ausgelöst durch:** `{{ $json.source }}`\\n**Zeitstempel:** `{{ $now.toFormat('dd.MM.yyyy HH:mm') }}`\\n\\n### ✅ Abgeschlossene Aktionen:\\n- 💾 Datenbank-Backup via GitHub Actions\\n- 🔄 Craft CMS & Plugin-Updates (`php craft update all`)\\n- 📦 Composer-Abhängigkeiten aktualisiert\\n\\nDieser Pull Request wurde automatisch erstellt und enthält die neuesten Updates. Bitte überprüfen und mergen. 🎯\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        200
+      ],
+      "name": "📤 Create Pull Request",
+      "credentials": {
+        "githubApi": {
+          "id": "YOUR_GITHUB_CREDENTIAL_ID",
+          "name": "GitHub API Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $secrets.FARBCODE_SLACK_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"#general\",\n  \"username\": \"craft-automation\",\n  \"icon_emoji\": \":rocket:\",\n  \"text\": \"🚀 Craft CMS Update erfolgreich! Pull Request erstellt.\",\n  \"attachments\": [{\n    \"color\": \"good\",\n    \"title\": \"✅ Pull Request zur Überprüfung bereit\",\n    \"title_link\": \"{{ $json.html_url }}\",\n    \"fields\": [\n      {\n        \"title\": \"Repository\",\n        \"value\": \"<https://github.com/{{ $json.full_name }}|{{ $json.full_name }}>\",\n        \"short\": true\n      },\n      {\n        \"title\": \"Trigger\",\n        \"value\": \"{{ $json.source }}\",\n        \"short\": true\n      }\n    ],\n    \"footer\": \"farbcode Craft Automation\"\n  }]\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        200
+      ],
+      "name": "✅ Slack Success"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $secrets.FARBCODE_SLACK_WEBHOOK }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"#alerts\",\n  \"username\": \"craft-automation\",\n  \"icon_emoji\": \":warning:\",\n  \"text\": \"🚨 Craft CMS Update fehlgeschlagen!\",\n  \"attachments\": [{\n    \"color\": \"danger\",\n    \"title\": \"❌ GitHub Action fehlgeschlagen\",\n    \"title_link\": \"https://github.com/{{ $json.full_name }}/actions/runs/{{ $json.workflow_runs[0].id }}\",\n    \"fields\": [\n      {\n        \"title\": \"Repository\",\n        \"value\": \"<https://github.com/{{ $json.full_name }}|{{ $json.full_name }}>\",\n        \"short\": true\n      },\n      {\n        \"title\": \"Fehler\",\n        \"value\": \"{{ $json.workflow_runs[0].conclusion }}\",\n        \"short\": true\n      }\n    ]\n  }]\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1780,
+        0
+      ],
+      "name": "🚨 Slack Error"
+    },
+    {
+      "parameters": {
+        "time": 2,
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 2,
+      "position": [
+        900,
+        100
+      ],
+      "name": "⏳ Wait for Action"
+    }
+  ],
+  "connections": {
+    "⏰ Weekly Trigger": { "main": [ [ { "node": "📋 GitHub Config", "type": "main", "index": 0 } ] ] },
+    "📋 GitHub Config": { "main": [ [ { "node": "🚀 Trigger GitHub Action", "type": "main", "index": 0 } ] ] },
+    "🚀 Trigger GitHub Action": { "main": [ [ { "node": "⏳ Wait for Action", "type": "main", "index": 0 } ] ] },
+    "⏳ Wait for Action": { "main": [ [ { "node": "📊 Check Action Status", "type": "main", "index": 0 } ] ] },
+    "📊 Check Action Status": { "main": [ [ { "node": "✅ Action Complete?", "type": "main", "index": 0 } ] ] },
+    "✅ Action Complete?": { "main": [ [], [ { "node": "🎉 Success?", "type": "main", "index": 0 } ] ] },
+    "🎉 Success?": { "main": [ [ { "node": "🚨 Slack Error", "type": "main", "index": 0 } ], [ { "node": "📤 Create Pull Request", "type": "main", "index": 0 } ] ] },
+    "📤 Create Pull Request": { "main": [ [ { "node": "✅ Slack Success", "type": "main", "index": 0 } ] ] }
+  }
+}
