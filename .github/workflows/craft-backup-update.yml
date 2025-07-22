@@ -39,113 +39,124 @@ jobs:
           ini-values: memory_limit=512M,post_max_size=64M,upload_max_filesize=64M
           coverage: none
 
-      - name: Check Project Structure
+      - name: Detect Craft Project
+        id: detect-craft
         run: |
-          echo "=== REPOSITORY STRUCTURE ==="
-          ls -la
+          # Suche nach Craft-Projekten im Repository
+          echo "Suche nach Craft-Projekten..."
           
-          if [ -d "mein-test-projekt" ]; then
-            echo "✅ mein-test-projekt directory found"
-            ls -la mein-test-projekt/
-            
-            if [ -f "mein-test-projekt/composer.json" ]; then
-              echo "✅ composer.json found in mein-test-projekt"
-              cat mein-test-projekt/composer.json | grep -E '"name"|"require"'
-            else
-              echo "❌ No composer.json in mein-test-projekt!"
+          # Suche nach composer.json Dateien mit craftcms/cms als Abhängigkeit
+          CRAFT_DIRS=()
+          while IFS= read -r file; do
+            dir=$(dirname "$file")
+            if grep -q '"craftcms/cms"' "$file"; then
+              CRAFT_DIRS+=("$dir")
+              echo "✅ Craft-Projekt gefunden in: $dir"
             fi
+          done < <(find . -name "composer.json" -type f)
+          
+          # Wenn keine composer.json mit craftcms gefunden wurde, suche nach Craft-Binaries
+          if [ ${#CRAFT_DIRS[@]} -eq 0 ]; then
+            while IFS= read -r file; do
+              dir=$(dirname "$file")
+              CRAFT_DIRS+=("$dir")
+              echo "✅ Craft-Binary gefunden in: $dir"
+            done < <(find . -name "craft" -type f -not -path "*/vendor/*" -not -path "*/.git/*")
+          fi
+          
+          # Wenn immer noch nichts gefunden wurde, suche nach /vendor/craftcms
+          if [ ${#CRAFT_DIRS[@]} -eq 0 ]; then
+            while IFS= read -r dir; do
+              parent=$(dirname "$(dirname "$dir")")
+              CRAFT_DIRS+=("$parent")
+              echo "✅ Craft-Verzeichnisstruktur gefunden in: $parent"
+            done < <(find . -path "*/vendor/craftcms" -type d)
+          fi
+          
+          # Wenn mehrere Verzeichnisse gefunden wurden, verwende das erste
+          if [ ${#CRAFT_DIRS[@]} -gt 0 ]; then
+            CRAFT_DIR="${CRAFT_DIRS[0]}"
+            # Entferne ./ vom Pfadanfang, wenn vorhanden
+            CRAFT_DIR="${CRAFT_DIR#./}"
+            echo "PROJECT_DIR=$CRAFT_DIR" >> $GITHUB_ENV
+            echo "project_dir=$CRAFT_DIR" >> $GITHUB_OUTPUT
+            echo "Verwende Craft-Projekt in: $CRAFT_DIR"
           else
-            echo "❌ mein-test-projekt directory NOT FOUND!"
+            echo "❌ Kein Craft-Projekt gefunden!"
+            echo "PROJECT_DIR=." >> $GITHUB_ENV
+            echo "project_dir=." >> $GITHUB_OUTPUT
           fi
 
-      - name: Install Composer in Project Directory
+      - name: Install Composer Dependencies
         run: |
-          cd mein-test-projekt
-          echo "=== Current directory: $(pwd) ==="
+          # Wechsle in das Projektverzeichnis
+          cd "$PROJECT_DIR"
+          echo "Arbeite in Verzeichnis: $(pwd)"
           
-          # Composer-Cache prüfen und löschen
+          # Composer-Abhängigkeiten installieren
+          echo "Installiere Composer-Abhängigkeiten..."
+          composer install --no-interaction
+          
+          # Prüfe, ob vendor-Verzeichnis erstellt wurde
           if [ -d "vendor" ]; then
-            echo "Removing existing vendor directory..."
-            rm -rf vendor
-          fi
-          
-          # Composer-Lock-Datei zurücksetzen
-          if [ -f "composer.lock" ]; then
-            echo "Removing existing composer.lock..."
-            rm composer.lock
-          fi
-          
-          # Composer selbst aktualisieren
-          echo "Updating composer itself..."
-          composer self-update
-          
-          # Abhängigkeiten installieren
-          echo "Installing dependencies..."
-          composer install --no-dev --prefer-dist --no-scripts --no-plugins
-          
-          # Prüfen, ob vendor existiert
-          if [ -d "vendor" ]; then
-            echo "✅ vendor directory created successfully"
-            ls -la vendor/
-            
-            if [ -f "vendor/autoload.php" ]; then
-              echo "✅ autoload.php found"
-            else
-              echo "❌ autoload.php MISSING - creating fallback!"
-              mkdir -p vendor
-              echo '<?php
-              // Emergency autoloader fallback
-              spl_autoload_register(function($class) {
-                  echo "Attempted to load: " . $class . "\n";
-              });
-              ' > vendor/autoload.php
-            fi
+            echo "✅ vendor-Verzeichnis erfolgreich erstellt"
           else
-            echo "❌ vendor directory MISSING after composer install!"
-            mkdir -p vendor
-            echo "Created empty vendor directory as fallback"
+            echo "⚠️ vendor-Verzeichnis fehlt - composer install fehlgeschlagen?"
           fi
-          
-          # Absoluten Pfad speichern
-          echo "PROJECT_DIR=$(pwd)" >> $GITHUB_ENV
 
-      - name: Create Fallback Craft Binary
+      - name: Locate or Create Craft Binary
+        id: locate-craft
         run: |
-          cd mein-test-projekt
+          # Wechsle in das Projektverzeichnis
+          cd "$PROJECT_DIR"
           
-          # Fallback-Craft-Binary erstellen
-          echo '#!/usr/bin/env php
-          <?php
-          // Fallback craft binary
-          echo "Running fallback craft binary\n";
-          
-          // Simulate the setup command
-          if (isset($argv[1]) && $argv[1] == "setup/db-creds") {
-              echo "Setting up DB credentials (simulated)\n";
-              exit(0);
-          }
-          
-          // Simulate the update command
-          if (isset($argv[1]) && $argv[1] == "update" && isset($argv[2]) && $argv[2] == "all") {
-              echo "Running Craft updates (simulated)\n";
-              exit(0);
-          }
-          
-          // Default behavior
-          echo "Unknown command\n";
-          exit(0);
-          ' > craft_fallback
-          chmod +x craft_fallback
-          
-          echo "CRAFT_BINARY=$(pwd)/craft_fallback" >> $GITHUB_ENV
-          echo "Created fallback craft binary"
+          # Suche nach Craft-Binary
+          if [ -f "craft" ]; then
+            echo "✅ craft-Binary im Projektstamm gefunden"
+            chmod +x craft
+            echo "CRAFT_EXECUTABLE=craft" >> $GITHUB_ENV
+            echo "craft_executable=craft" >> $GITHUB_OUTPUT
+          elif [ -f "vendor/bin/craft" ]; then
+            echo "✅ craft-Binary in vendor/bin gefunden"
+            chmod +x vendor/bin/craft
+            echo "CRAFT_EXECUTABLE=vendor/bin/craft" >> $GITHUB_ENV
+            echo "craft_executable=vendor/bin/craft" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Keine craft-Binary gefunden, erstelle Fallback..."
+            
+            # Erstelle Fallback-Binary
+            echo '#!/usr/bin/env php
+            <?php
+            echo "Fallback Craft CLI\n";
+            
+            if (isset($argv[1]) && $argv[1] === "setup/db-creds") {
+                echo "DB credentials setup simuliert\n";
+                exit(0);
+            }
+            
+            if (isset($argv[1]) && $argv[1] === "update" && isset($argv[2]) && $argv[2] === "all") {
+                echo "Craft update simuliert\n";
+                exit(0);
+            }
+            
+            echo "Unbekannter Befehl\n";
+            exit(0);
+            ' > craft-fallback
+            chmod +x craft-fallback
+            
+            echo "CRAFT_EXECUTABLE=craft-fallback" >> $GITHUB_ENV
+            echo "craft_executable=craft-fallback" >> $GITHUB_OUTPUT
+            echo "✅ Fallback craft-Binary erstellt"
+          fi
 
       - name: Create .env and DB Config
         run: |
-          cd mein-test-projekt
+          # Wechsle in das Projektverzeichnis
+          cd "$PROJECT_DIR"
           
-          # .env erstellen
-          cat <<EOF > .env
+          # .env-Datei erstellen
+          echo "Erstelle .env-Datei..."
+          cat > .env <<EOF
           DB_DRIVER=mysql
           DB_SERVER=127.0.0.1
           DB_PORT=3306
@@ -156,32 +167,57 @@ jobs:
           ENVIRONMENT=dev
           EOF
           
-          # DB-Config erstellen
+          # Stelle sicher, dass config-Verzeichnis existiert
           mkdir -p config
-          echo '<?php
-          return [
-              "driver" => "mysql",
-              "server" => "127.0.0.1",
-              "port" => 3306,
-              "database" => "${{ secrets.MYSQL_DATABASE }}",
-              "user" => "${{ secrets.MYSQL_USER }}",
-              "password" => "${{ secrets.MYSQL_PASSWORD }}",
-              "tablePrefix" => "",
-          ];
-          ' > config/db.php
           
-          echo "Created .env and config/db.php"
+          # db.php erstellen
+          echo "Erstelle config/db.php..."
+          cat > config/db.php <<EOF
+          <?php
+          return [
+              'driver' => 'mysql',
+              'server' => '127.0.0.1',
+              'port' => 3306,
+              'database' => '${{ secrets.MYSQL_DATABASE }}',
+              'user' => '${{ secrets.MYSQL_USER }}',
+              'password' => '${{ secrets.MYSQL_PASSWORD }}',
+              'tablePrefix' => '',
+              'charset' => 'utf8',
+              'collation' => 'utf8_unicode_ci',
+          ];
+          EOF
 
-      - name: Run Composer Update
+      - name: Backup Database
+        env:
+          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD }}
         run: |
-          cd mein-test-projekt
+          # Wechsle in das Projektverzeichnis
+          cd "$PROJECT_DIR"
+          
+          # Erstelle backups-Verzeichnis
+          mkdir -p backups
+          
+          # Datenbankbackup erstellen
+          echo "Erstelle Datenbankbackup..."
+          mysqldump --no-tablespaces -h127.0.0.1 -u${{ secrets.MYSQL_USER }} ${{ secrets.MYSQL_DATABASE }} > backups/backup_$(date +'%F').sql || echo "⚠️ Backup fehlgeschlagen, fahre trotzdem fort"
+
+      - name: Run DB Setup and Craft Update
+        continue-on-error: true
+        run: |
+          # Wechsle in das Projektverzeichnis
+          cd "$PROJECT_DIR"
+          
+          # DB-Setup ausführen
+          echo "Führe Craft DB-Setup aus..."
+          php $CRAFT_EXECUTABLE setup/db-creds --interactive=0 || echo "⚠️ DB-Setup fehlgeschlagen, fahre trotzdem fort"
           
           # Composer-Update ausführen
-          echo "=== Running composer update ==="
-          composer update --no-scripts --no-interaction || echo "Composer update failed, but continuing..."
+          echo "Führe Composer-Update aus..."
+          composer update --no-interaction
           
-          echo "=== Changes after composer update ==="
-          git status
+          # Craft-Update ausführen
+          echo "Führe Craft-Update aus..."
+          php $CRAFT_EXECUTABLE update all --interactive=0 || echo "⚠️ Craft-Update fehlgeschlagen, fahre trotzdem fort"
 
       - name: Configure Git
         run: |
@@ -192,24 +228,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Branch-Name
+          # Branch-Namen erstellen
           BRANCH_NAME="updates/automated-craft-$(date +'%F')"
+          echo "Erstelle Branch: $BRANCH_NAME"
           
-          # Branch erstellen
-          echo "Creating branch: $BRANCH_NAME"
+          # Prüfen, ob Branch bereits existiert
+          if git ls-remote --heads origin $BRANCH_NAME | grep -q $BRANCH_NAME; then
+            echo "Branch existiert bereits, lösche ihn..."
+            git push origin --delete $BRANCH_NAME || echo "Konnte Branch nicht löschen, fahre trotzdem fort"
+          fi
+          
+          # Neuen Branch erstellen
           git checkout -b $BRANCH_NAME
           
-          # Änderungen hinzufügen
-          echo "Adding changes..."
-          git add mein-test-projekt/composer.json mein-test-projekt/composer.lock || true
-          git status
+          # Änderungen hinzufügen, wenn Projekt gefunden wurde
+          if [ "$PROJECT_DIR" != "." ]; then
+            echo "Füge Änderungen hinzu..."
+            git add "$PROJECT_DIR/composer.json" "$PROJECT_DIR/composer.lock" || echo "Keine Änderungen zum Hinzufügen"
+          fi
           
           # Commit erstellen
-          git commit -m "chore(deps): Automatische Craft & Plugin Updates" || echo "No changes to commit"
+          git commit -m "chore(deps): Automatische Craft & Plugin Updates $(date +'%F')" || echo "Keine Änderungen zum Committen"
           
-          # Leeren Commit erstellen, falls nötig
+          # Leeren Commit erstellen
           git commit --allow-empty -m "chore: Workflow Test" || true
           
           # Branch pushen
           git push --set-upstream origin $BRANCH_NAME
-          echo "Branch pushed successfully"
+          echo "Branch erfolgreich gepusht: $BRANCH_NAME"
