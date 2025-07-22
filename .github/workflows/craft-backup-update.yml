@@ -4,6 +4,8 @@ on:
   repository_dispatch:
     types:
       - run-backup-und-update
+  # Optional: Zum Testen auch manuell auslösbar machen
+  workflow_dispatch:
 
 jobs:
   craft-auto-update:
@@ -38,27 +40,63 @@ jobs:
           ini-values: memory_limit=512M,post_max_size=64M,upload_max_filesize=64M
           coverage: none
 
+      - name: Show Directory Structure Before
+        run: |
+          echo "=== REPOSITORY STRUCTURE ==="
+          ls -la
+          echo "=== CHECKING FOR CRAFT ==="
+          find . -name "craft" -type f 2>/dev/null || echo "No craft executable found yet"
+
       - name: Install Composer Dependencies
         run: |
-          echo "=== Working Directory ==="
-          pwd
-          ls -la
-          echo "=== Composer Validation ==="
-          composer validate --no-check-publish
-          echo "=== Composer Diagnose ==="
-          composer diagnose
           echo "=== Installing Dependencies ==="
-          composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-scripts --verbose
-          echo "=== Post-Install Directory Check ==="
-          ls -la
-          echo "=== Vendor Directory Check ==="
-          ls -la vendor/ || echo "vendor directory doesn't exist"
-          echo "=== Vendor/bin Directory Check ==="
-          ls -la vendor/bin/ || echo "vendor/bin directory doesn't exist"
-          echo "=== Looking for Craft ==="
-          find . -name "craft" -type f 2>/dev/null || echo "No craft file found"
-          echo "=== Composer Show ==="
-          composer show | grep craft || echo "No craft packages found"
+          composer install --no-interaction --prefer-dist
+          echo "=== Optimizing Autoloader ==="
+          composer dump-autoload -o
+          
+      - name: Check for Craft Binary
+        id: check-craft
+        run: |
+          echo "=== CHECKING FOR CRAFT AFTER COMPOSER ==="
+          find . -name "craft" -type f -not -path "*/\.git/*" | tee craft_paths.txt
+          if [ -s craft_paths.txt ]; then
+            CRAFT_PATH=$(head -n 1 craft_paths.txt)
+            echo "CRAFT_PATH=$CRAFT_PATH" >> $GITHUB_ENV
+            echo "Found Craft at: $CRAFT_PATH"
+            chmod +x "$CRAFT_PATH"
+            echo "craft_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "No craft executable found, will create one"
+            echo "craft_exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Create Craft CLI Executable
+        if: steps.check-craft.outputs.craft_exists != 'true'
+        run: |
+          echo "=== CREATING CRAFT EXECUTABLE ==="
+          echo '#!/usr/bin/env php
+          <?php
+          define("CRAFT_BASE_PATH", __DIR__);
+          define("CRAFT_VENDOR_PATH", CRAFT_BASE_PATH."/vendor");
+          
+          // Load autoloader
+          require_once CRAFT_VENDOR_PATH."/autoload.php";
+          
+          // Load dotenv
+          if (class_exists("Dotenv\Dotenv") && file_exists(CRAFT_BASE_PATH."/.env")) {
+              $dotenv = Dotenv\Dotenv::createUnsafeImmutable(CRAFT_BASE_PATH);
+              $dotenv->load();
+          }
+          
+          // Run craft
+          define("CRAFT_ENVIRONMENT", getenv("ENVIRONMENT") ?: "production");
+          $app = require CRAFT_VENDOR_PATH."/craftcms/cms/bootstrap/console.php";
+          $exitCode = $app->run();
+          exit($exitCode);
+          ' > craft
+          chmod +x craft
+          echo "CRAFT_PATH=./craft" >> $GITHUB_ENV
+          echo "Created craft executable"
 
       - name: Backup Database
         env:
@@ -66,8 +104,9 @@ jobs:
         run: |
           mkdir -p backups
           mysqldump --no-tablespaces -h127.0.0.1 -u${{ secrets.MYSQL_USER }} ${{ secrets.MYSQL_DATABASE }} > backups/backup_$(date +'%F').sql
+          echo "Created database backup"
 
-      - name: Create .env
+      - name: Create .env File
         run: |
           cat <<EOF > .env
           DB_DRIVER=mysql
@@ -79,28 +118,26 @@ jobs:
           SECURITY_KEY=${{ secrets.SECURITY_KEY }}
           ENVIRONMENT=dev
           EOF
+          echo "Created .env file"
+
+      - name: Test Craft Binary
+        run: |
+          echo "=== TESTING CRAFT BINARY ==="
+          php $CRAFT_PATH help
+          echo "Craft binary works!"
 
       - name: Test DB Connection
-        run: php vendor/bin/craft setup/db-creds --interactive=0
-      - name: Create Craft CLI Shortcut
         run: |
-          echo '#!/usr/bin/env php
-          <?php
-          define("CRAFT_BASE_PATH", __DIR__);
-          define("CRAFT_VENDOR_PATH", CRAFT_BASE_PATH."/vendor");
-          // Load autoloader
-          require_once CRAFT_VENDOR_PATH."/autoload.php";
-          // Load dotenv?
-          if (class_exists("Dotenv\Dotenv") && file_exists(CRAFT_BASE_PATH."/.env")) {
-              Dotenv\Dotenv::createUnsafeImmutable(CRAFT_BASE_PATH)->load();
-          }
-          // Run craft
-        define("CRAFT_ENVIRONMENT", getenv("ENVIRONMENT") ?: "production");
-        $app = require CRAFT_VENDOR_PATH."/craftcms/cms/bootstrap/console.php";
-          $exitCode = $app->run();
-          exit($exitCode);
-          ' > craft
-          chmod +x craft
+          echo "=== TESTING DB CONNECTION ==="
+          php $CRAFT_PATH setup/db-creds --interactive=0
+          echo "Database connection successful!"
+
+      - name: Run Composer Update
+        run: |
+          echo "=== UPDATING COMPOSER DEPENDENCIES ==="
+          composer update --no-interaction
+          echo "Composer dependencies updated"
+
       - name: Run Craft Update
         env:
           DB_DRIVER: "mysql"
@@ -111,21 +148,39 @@ jobs:
           DB_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
           SECURITY_KEY: ${{ secrets.SECURITY_KEY }}
           CRAFT_LICENSE_KEY: ${{ secrets.CRAFT_LICENSE_KEY }}
-        run: php vendor/bin/craft update all --interactive=0
+        run: |
+          echo "=== RUNNING CRAFT UPDATE ==="
+          php $CRAFT_PATH update all --interactive=0
+          echo "Craft CMS updated successfully"
 
       - name: Configure Git
         run: |
-          git config --global user.name  'github-actions[bot]'
+          git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          echo "Git configured"
 
-      - name: Commit & Push Changes
+      - name: Create and Push Branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if ! git diff --quiet composer.lock composer.json; then
-            BR=updates/automated-craft-$(date +'%F')
-            git checkout -b $BR
-            git add composer.lock composer.json
-            git commit -m "chore(deps): Autom. Craft & Plugin Updates"
-            git push --set-upstream origin $BR
+          # Immer einen Branch erstellen, egal ob Änderungen vorliegen
+          BRANCH_NAME="updates/automated-craft-$(date +'%F')"
+          echo "Creating branch: $BRANCH_NAME"
+          
+          # Prüfen, ob Branch schon existiert und ggf. löschen
+          if git ls-remote --heads origin $BRANCH_NAME | grep -q $BRANCH_NAME; then
+            echo "Branch already exists, deleting it"
+            git push origin --delete $BRANCH_NAME || true
           fi
+          
+          # Neuen Branch erstellen
+          git checkout -b $BRANCH_NAME
+          
+          # Immer alle Änderungen committen, auch wenn keine Änderungen vorliegen
+          # (wird einen leeren Commit erstellen, wenn keine Änderungen da sind)
+          git add composer.lock composer.json
+          git commit -m "chore(deps): Automatische Craft & Plugin Updates $(date +'%F')" || echo "No changes to commit"
+          
+          # Branch pushen
+          git push --set-upstream origin $BRANCH_NAME
+          echo "Branch pushed to repository"
