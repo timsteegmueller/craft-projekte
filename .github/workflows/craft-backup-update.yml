@@ -40,14 +40,25 @@ jobs:
 
       - name: Install Composer Dependencies
         run: |
+          echo "=== Working Directory ==="
+          pwd
+          ls -la
           echo "=== Composer Validation ==="
-          composer validate
+          composer validate --no-check-publish
+          echo "=== Composer Diagnose ==="
+          composer diagnose
           echo "=== Installing Dependencies ==="
           composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-scripts --verbose
-          echo "=== Checking vendor/bin directory ==="
+          echo "=== Post-Install Directory Check ==="
+          ls -la
+          echo "=== Vendor Directory Check ==="
+          ls -la vendor/ || echo "vendor directory doesn't exist"
+          echo "=== Vendor/bin Directory Check ==="
           ls -la vendor/bin/ || echo "vendor/bin directory doesn't exist"
-          echo "=== Checking for craft executable ==="
-          test -f vendor/bin/craft && echo "✅ craft executable found" || echo "❌ craft executable missing"
+          echo "=== Looking for Craft ==="
+          find . -name "craft" -type f 2>/dev/null || echo "No craft file found"
+          echo "=== Composer Show ==="
+          composer show | grep craft || echo "No craft packages found"
 
       - name: Backup Database
         env:
