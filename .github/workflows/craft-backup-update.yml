@@ -5,6 +5,12 @@ on:
     types:
       - run-backup-und-update
   workflow_dispatch:
+    inputs:
+      force_update:
+        description: 'Erzwinge Update (ignoriert Versionseinschränkungen)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   update-dependencies:
@@ -20,35 +26,126 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, intl, zip
+          extensions: mbstring, intl, zip, gd, pdo_mysql
           coverage: none
 
       - name: Find Project Directory
         id: find-dir
         run: |
-          # Prüfe ob mein-test-projekt existiert
-          if [ -d "mein-test-projekt" ] && [ -f "mein-test-projekt/composer.json" ]; then
-            PROJECT_DIR="mein-test-projekt"
-          else
-            # Finde erstes Verzeichnis mit composer.json
-            PROJECT_DIR=$(find . -name "composer.json" -not -path "*/vendor/*" | head -n 1 | xargs dirname || echo ".")
+          # Craft-Projekte finden
+          CRAFT_DIRS=()
+          
+          # Methode 1: Suche nach composer.json mit craftcms/cms
+          while IFS= read -r file; do
+            if grep -q '"craftcms/cms"' "$file"; then
+              dir=$(dirname "$file")
+              CRAFT_DIRS+=("$dir")
+              echo "✅ Craft-Projekt gefunden in: $dir (via composer.json)"
+            fi
+          done < <(find . -name "composer.json" -type f -not -path "*/vendor/*")
+          
+          # Wenn nichts gefunden, suche nach craft-Dateien
+          if [ ${#CRAFT_DIRS[@]} -eq 0 ]; then
+            while IFS= read -r file; do
+              dir=$(dirname "$file")
+              CRAFT_DIRS+=("$dir")
+              echo "✅ Craft-Projekt gefunden in: $dir (via craft binary)"
+            fi
+          done < <(find . -name "craft" -type f -not -path "*/vendor/*")
+          
+          # Wenn immer noch nichts gefunden, suche nach bekannten Verzeichnissen
+          if [ ${#CRAFT_DIRS[@]} -eq 0 ]; then
+            if [ -d "mein-test-projekt" ] && [ -f "mein-test-projekt/composer.json" ]; then
+              CRAFT_DIRS+=("mein-test-projekt")
+              echo "✅ Craft-Projekt gefunden in: mein-test-projekt (via bekanntes Verzeichnis)"
+            fi
           fi
           
-          echo "Verwende Projekt-Verzeichnis: $PROJECT_DIR"
+          # Wenn mehrere Verzeichnisse gefunden, nimm das erste
+          if [ ${#CRAFT_DIRS[@]} -gt 0 ]; then
+            PROJECT_DIR="${CRAFT_DIRS[0]}"
+          else
+            # Fallback: Nehme das erste Verzeichnis mit composer.json
+            first_composer=$(find . -name "composer.json" -not -path "*/vendor/*" | head -n 1)
+            if [ -n "$first_composer" ]; then
+              PROJECT_DIR=$(dirname "$first_composer")
+              echo "⚠️ Kein Craft-Projekt gefunden, verwende: $PROJECT_DIR (enthält composer.json)"
+            else
+              PROJECT_DIR="."
+              echo "⚠️ Keine composer.json gefunden, verwende Root-Verzeichnis"
+            fi
+          fi
+          
+          echo "Ausgewähltes Projekt-Verzeichnis: $PROJECT_DIR"
           echo "project_dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
 
-      - name: Direct Composer Update
+      - name: Composer Update
+        id: composer-update
         working-directory: ${{ steps.find-dir.outputs.project_dir }}
         run: |
           echo "=== Working in $(pwd) ==="
           
-          # Speichere die original composer.json/lock
-          cp composer.json composer.json.original || true
-          cp composer.lock composer.lock.original || true
+          # Composer-Status
+          echo "=== Composer-Version ==="
+          composer --version
           
-          # Führe Composer Update durch
-          echo "=== Running composer update ==="
-          composer update --no-scripts --no-interaction
+          # Force-Update-Parameter
+          UPDATE_FLAGS="--no-interaction"
+          if [[ "${{ github.event.inputs.force_update }}" == "true" ]]; then
+            echo "Force-Update aktiviert!"
+            UPDATE_FLAGS="$UPDATE_FLAGS --with-all-dependencies"
+          else
+            # Normale Updates innerhalb der Versionseinschränkungen
+            UPDATE_FLAGS="$UPDATE_FLAGS --prefer-stable"
+          fi
+          
+          # Prüfe, ob composer.json existiert
+          if [ ! -f "composer.json" ]; then
+            echo "⚠️ composer.json nicht gefunden!"
+            exit 1
+          fi
+          
+          # Speichere den ursprünglichen Zustand für Vergleich
+          cp composer.json composer.json.bak
+          if [ -f "composer.lock" ]; then
+            cp composer.lock composer.lock.bak
+          fi
+          
+          # Führe composer update aus
+          echo "=== Running composer update $UPDATE_FLAGS ==="
+          composer update $UPDATE_FLAGS
+          
+          # Prüfe, ob Änderungen vorgenommen wurden
+          if diff -q composer.json composer.json.bak >/dev/null && 
+             ([ ! -f "composer.lock" ] || diff -q composer.lock composer.lock.bak >/dev/null); then
+            echo "Keine Änderungen an composer.json oder composer.lock festgestellt"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Änderungen an Composer-Dateien festgestellt"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Entferne Backup-Dateien
+          rm -f composer.json.bak composer.lock.bak
+
+      - name: Show Dependency Changes
+        if: steps.composer-update.outputs.has_changes == 'true'
+        working-directory: ${{ steps.find-dir.outputs.project_dir }}
+        run: |
+          echo "=== Änderungen an Composer-Abhängigkeiten ==="
+          
+          if [ -f "composer.lock" ]; then
+            # Zeige die wichtigsten Änderungen an
+            php -r '
+              $lockData = json_decode(file_get_contents("composer.lock"), true);
+              if (isset($lockData["packages"])) {
+                  echo "Installierte Pakete:\n";
+                  foreach ($lockData["packages"] as $package) {
+                      echo "- " . $package["name"] . ": " . $package["version"] . "\n";
+                  }
+              }
+            ' | grep -E "(craftcms|plugin)"
+          fi
 
       - name: Configure Git
         run: |
@@ -59,21 +156,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Erzeuge einen eindeutigen Branch-Namen
-          TIMESTAMP=$(date +'%Y%m%d%H%M%S')
-          BRANCH_NAME="update/composer-$TIMESTAMP"
+          # Erzeuge Branch-Namen mit Datum
+          DATESTAMP=$(date +'%Y-%m-%d')
+          BRANCH_NAME="update/composer-$DATESTAMP"
           
-          # Erstelle einen neuen Branch
+          # Prüfe, ob Branch bereits existiert
+          if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
+            # Füge Timestamp hinzu, um eindeutigen Namen zu haben
+            TIMESTAMP=$(date +'%H%M%S')
+            BRANCH_NAME="update/composer-$DATESTAMP-$TIMESTAMP"
+          fi
+          
+          echo "Erstelle Branch: $BRANCH_NAME"
           git checkout -b "$BRANCH_NAME"
           
-          # Füge die geänderten Dateien hinzu
+          # Füge Änderungen hinzu
           PROJECT_DIR="${{ steps.find-dir.outputs.project_dir }}"
           git add "$PROJECT_DIR/composer.json" "$PROJECT_DIR/composer.lock" || true
           
-          # Erstelle einen Commit, auch wenn leer
-          git commit -m "Update composer dependencies" || git commit --allow-empty -m "Dependency update (no changes)"
+          # Commit-Nachricht basierend auf Änderungen
+          if [[ "${{ steps.composer-update.outputs.has_changes }}" == "true" ]]; then
+            git commit -m "chore(deps): Update Composer-Abhängigkeiten" || git commit --allow-empty -m "chore: Composer-Update (keine Änderungen)"
+          else
+            git commit --allow-empty -m "chore: Composer-Update geprüft (keine Änderungen)"
+          fi
           
-          # Push den Branch
+          # Branch pushen
           git push --set-upstream origin "$BRANCH_NAME"
-          
           echo "::notice::Branch $BRANCH_NAME wurde erstellt und gepusht"
